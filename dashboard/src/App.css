@@ -1,0 +1,715 @@
+/* ============================================
+   CRYPTO AI TRADING DASHBOARD
+   ============================================ */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+
+.dashboard {
+  min-height: 100vh;
+}
+
+/* Header */
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.header-left h1 {
+  font-size: 1.5rem;
+  color: #f8fafc;
+}
+
+.version {
+  background: #3b82f6;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.auto-refresh label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.refresh-btn {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.refresh-btn:hover {
+  background: #2563eb;
+}
+
+.refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.last-update {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+/* Market Summary Banner */
+.market-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  border-left: 4px solid;
+  margin: 1rem 2rem;
+  border-radius: 0 8px 8px 0;
+}
+
+.summary-text {
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.risk-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  color: white;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* Main Content Layout */
+.dashboard-content {
+  display: grid;
+  grid-template-columns: 280px 1fr 320px;
+  gap: 1.5rem;
+  padding: 1.5rem 2rem;
+  min-height: calc(100vh - 150px);
+}
+
+/* Sidebar */
+.sidebar {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+/* Main Content */
+.main-content {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.main-content h2 {
+  margin-bottom: 1.5rem;
+  color: #f8fafc;
+}
+
+.signals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+/* Detail Panel */
+.detail-panel {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.no-selection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #64748b;
+}
+
+/* Signal Card */
+.signal-card {
+  background: #0f172a;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  padding: 1.25rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.signal-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+.signal-card.selected {
+  box-shadow: 0 0 0 2px currentColor;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.coin-emoji {
+  font-size: 1.5rem;
+}
+
+.coin-name {
+  font-weight: 600;
+  font-size: 1.1rem;
+  flex: 1;
+}
+
+.verdict-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.card-price {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.price {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.price-source {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  background: #334155;
+}
+
+.price-source.live {
+  background: #10b981;
+  color: white;
+}
+
+/* Probability Bars */
+.card-probabilities {
+  margin-bottom: 1rem;
+}
+
+.prob-bar {
+  margin-bottom: 0.5rem;
+}
+
+.prob-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+}
+
+.prob-value.win {
+  color: #10b981;
+}
+
+.prob-value.loss {
+  color: #ef4444;
+}
+
+.prob-track {
+  height: 6px;
+  background: #334155;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.prob-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.prob-fill.win {
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.prob-fill.loss {
+  background: linear-gradient(90deg, #ef4444, #f87171);
+}
+
+/* Edge */
+.card-edge {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-top: 1px solid #334155;
+  margin-bottom: 0.5rem;
+}
+
+.edge-label {
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.edge-value {
+  font-weight: 600;
+}
+
+.edge-value.positive {
+  color: #10b981;
+}
+
+.edge-value.negative {
+  color: #ef4444;
+}
+
+/* Card Footer */
+.card-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #334155;
+}
+
+.confidence {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.warnings-badge {
+  background: #fef3c7;
+  color: #92400e;
+  padding: 0.15rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  margin-left: auto;
+}
+
+/* Market Context */
+.market-context h3 {
+  margin-bottom: 1rem;
+  color: #f8fafc;
+}
+
+.btc-price-section {
+  text-align: center;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #334155;
+}
+
+.btc-price {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.btc-change {
+  font-size: 0.9rem;
+  margin-top: 0.25rem;
+}
+
+.btc-change.positive {
+  color: #10b981;
+}
+
+.btc-change.negative {
+  color: #ef4444;
+}
+
+.trend-table {
+  margin-bottom: 1rem;
+}
+
+.trend-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #334155;
+}
+
+.trend-label {
+  color: #94a3b8;
+}
+
+.trend-value {
+  font-weight: 500;
+}
+
+.overall-trend {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.75rem;
+  background: #0f172a;
+  border-radius: 8px;
+  margin: 1rem 0;
+}
+
+.overall-label {
+  color: #94a3b8;
+}
+
+.overall-value {
+  font-weight: 600;
+}
+
+.trend-strength {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.strength-label {
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.strength-bar {
+  flex: 1;
+  height: 8px;
+  background: #334155;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.strength-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+  border-radius: 4px;
+}
+
+.strength-value {
+  font-size: 0.85rem;
+  color: #f8fafc;
+}
+
+.alts-support {
+  text-align: center;
+  padding: 0.75rem;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.alts-support.yes {
+  background: #064e3b;
+  color: #34d399;
+}
+
+.alts-support.no {
+  background: #7f1d1d;
+  color: #fca5a5;
+}
+
+/* Coin Detail */
+.coin-detail h3 {
+  margin-bottom: 1rem;
+  color: #f8fafc;
+}
+
+.capital-input {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.capital-input input {
+  width: 100px;
+  padding: 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+.detail-verdict {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.detail-verdict.buy {
+  background: #064e3b;
+}
+
+.detail-verdict.wait {
+  background: #78350f;
+}
+
+.detail-verdict.avoid {
+  background: #7f1d1d;
+}
+
+.detail-verdict.hold {
+  background: #1e3a8a;
+}
+
+.detail-verdict.exit {
+  background: #7f1d1d;
+}
+
+.verdict-text {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.confidence-text {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.detail-section {
+  margin-bottom: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #334155;
+}
+
+.detail-section h4 {
+  margin-bottom: 0.75rem;
+  color: #94a3b8;
+  font-size: 0.9rem;
+}
+
+.reasoning-list,
+.warnings-list {
+  list-style: none;
+}
+
+.reasoning-list li,
+.warnings-list li {
+  padding: 0.5rem;
+  background: #0f172a;
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.warnings-list li {
+  background: #7f1d1d;
+  color: #fca5a5;
+}
+
+.forecast-targets {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.target {
+  text-align: center;
+  padding: 0.75rem;
+  background: #0f172a;
+  border-radius: 8px;
+}
+
+.target-label {
+  display: block;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-bottom: 0.25rem;
+}
+
+.target-price {
+  font-weight: 600;
+}
+
+.target.bull .target-price {
+  color: #10b981;
+}
+
+.target.bear .target-price {
+  color: #ef4444;
+}
+
+.risk-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.risk-item {
+  background: #0f172a;
+  padding: 0.75rem;
+  border-radius: 8px;
+}
+
+.risk-label {
+  display: block;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-bottom: 0.25rem;
+}
+
+.risk-value {
+  font-weight: 600;
+}
+
+.risk-value.win {
+  color: #10b981;
+}
+
+.risk-value.loss {
+  color: #ef4444;
+}
+
+.regime-info {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.regime-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.regime-badge.trending {
+  background: #10b981;
+  color: white;
+}
+
+.regime-badge.ranging {
+  background: #f59e0b;
+  color: white;
+}
+
+.regime-badge.transitioning {
+  background: #8b5cf6;
+  color: white;
+}
+
+.regime-badge.unknown {
+  background: #6b7280;
+  color: white;
+}
+
+.adx,
+.volatility {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.regime-recommendation {
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+
+/* Buy Alert */
+.buy-alert {
+  background: #064e3b;
+  border: 2px solid #10b981;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.buy-alert h3 {
+  color: #34d399;
+  margin-bottom: 1rem;
+}
+
+.buy-signal-item {
+  padding: 0.5rem;
+  background: rgba(16, 185, 129, 0.2);
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+}
+
+/* Error State */
+.error-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.error-container {
+  text-align: center;
+  padding: 2rem;
+  background: #1e293b;
+  border-radius: 12px;
+  max-width: 400px;
+}
+
+.error-container h2 {
+  margin-bottom: 1rem;
+}
+
+.error-container code {
+  display: block;
+  background: #0f172a;
+  padding: 0.75rem;
+  border-radius: 6px;
+  margin: 1rem 0;
+}
+
+.retry-btn {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1rem;
+  margin-top: 1rem;
+}
+
+.loading {
+  text-align: center;
+  padding: 2rem;
+  color: #94a3b8;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+  .dashboard-content {
+    grid-template-columns: 1fr;
+  }
+  
+  .sidebar,
+  .detail-panel {
+    display: none;
+  }
+}
