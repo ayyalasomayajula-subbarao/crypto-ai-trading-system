@@ -1,0 +1,851 @@
+/* ============================================================
+   CRYPTO AI TRADING DASHBOARD v4.1
+   Modern dark theme with Expectancy/Readiness metrics
+   ============================================================ */
+
+/* Reset & Base */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Dashboard Container */
+.dashboard {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  color: #e2e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  background: rgba(30, 41, 59, 0.8);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid #334155;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.header h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  background: linear-gradient(90deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.version {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.ws-status {
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.ws-status.connected {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.ws-status.disconnected {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.refresh-btn {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.refresh-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.last-update {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+/* ============================================================
+   MARKET BANNER
+   ============================================================ */
+.market-banner {
+  padding: 0.75rem 2rem;
+  text-align: center;
+  font-weight: 500;
+  border-bottom: 1px solid #334155;
+}
+
+.market-banner.positive {
+  background: rgba(16, 185, 129, 0.1);
+  color: #34d399;
+}
+
+.market-banner.negative {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+}
+
+.market-banner.neutral {
+  background: rgba(245, 158, 11, 0.1);
+  color: #fbbf24;
+}
+
+/* ============================================================
+   MAIN CONTENT LAYOUT
+   ============================================================ */
+.content {
+  display: grid;
+  grid-template-columns: 280px 1fr 380px;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  min-height: calc(100vh - 120px);
+}
+
+/* ============================================================
+   LEFT PANEL (BTC Context + User Inputs)
+   ============================================================ */
+.left-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* BTC Context */
+.btc-context {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 1.5rem;
+}
+
+.btc-context h3 {
+  margin-bottom: 1rem;
+  color: #f8fafc;
+  font-size: 1rem;
+}
+
+.btc-price {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+
+.btc-price span {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 400;
+  margin-top: 0.25rem;
+}
+
+.btc-price span.up { color: #10b981; }
+.btc-price span.down { color: #ef4444; }
+
+.trends {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.trend-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem;
+  background: rgba(15, 23, 42, 0.5);
+  border-radius: 8px;
+}
+
+.trend-row span:last-child {
+  font-weight: 500;
+}
+
+.trend-row span.up { color: #10b981; }
+.trend-row span.down { color: #ef4444; }
+.trend-row span.sideways { color: #f59e0b; }
+
+.overall-trend {
+  padding: 0.75rem;
+  border-radius: 8px;
+  text-align: center;
+  margin-bottom: 0.75rem;
+}
+
+.overall-trend.bullish { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+.overall-trend.bearish { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+.overall-trend.neutral { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+
+.alt-support {
+  padding: 0.5rem;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.alt-support.yes { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.alt-support.no { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+
+/* User Inputs */
+.user-inputs {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 1.5rem;
+}
+
+.user-inputs h3 {
+  margin-bottom: 1rem;
+  color: #f8fafc;
+  font-size: 1rem;
+}
+
+.input-group {
+  margin-bottom: 1rem;
+}
+
+.input-group label {
+  display: block;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-bottom: 0.25rem;
+}
+
+.input-group input,
+.input-group select {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.8);
+  color: #f8fafc;
+  font-size: 0.9rem;
+  transition: border-color 0.2s;
+}
+
+.input-group input:focus,
+.input-group select:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+/* ============================================================
+   MAIN PANEL (Signal Cards)
+   ============================================================ */
+.main-panel {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 1.5rem;
+}
+
+.main-panel h3 {
+  margin-bottom: 1.5rem;
+  color: #f8fafc;
+}
+
+.signals-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+/* Signal Card */
+.signal-card {
+  background: rgba(15, 23, 42, 0.8);
+  border: 2px solid transparent;
+  border-radius: 12px;
+  padding: 1.25rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.signal-card:hover {
+  border-color: #3b82f6;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+.signal-card.selected {
+  border-color: #3b82f6;
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+}
+
+/* Price Flash Animation */
+.signal-card.up .price-display {
+  animation: flash-green 0.5s ease;
+}
+
+.signal-card.down .price-display {
+  animation: flash-red 0.5s ease;
+}
+
+@keyframes flash-green {
+  0%, 100% { background: transparent; }
+  50% { background: rgba(16, 185, 129, 0.3); }
+}
+
+@keyframes flash-red {
+  0%, 100% { background: transparent; }
+  50% { background: rgba(239, 68, 68, 0.3); }
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.coin-name {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.verdict-badge {
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: white;
+  text-transform: uppercase;
+}
+
+.price-display {
+  margin-bottom: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 8px;
+  transition: background 0.3s;
+}
+
+.price {
+  font-size: 1.25rem;
+  font-weight: 700;
+  display: block;
+}
+
+.price-source {
+  font-size: 0.65rem;
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  margin-left: 0.5rem;
+}
+
+.change-24h {
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 0.75rem;
+}
+
+.change-24h.up { color: #10b981; }
+.change-24h.down { color: #ef4444; }
+
+/* Probability Bars in Card */
+.probs {
+  margin-bottom: 0.75rem;
+}
+
+.prob-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  margin-bottom: 0.35rem;
+}
+
+.prob-row span:first-child {
+  width: 35px;
+  color: #94a3b8;
+}
+
+.prob-bar {
+  flex: 1;
+  height: 6px;
+  background: #334155;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.prob-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.prob-fill.win { background: linear-gradient(90deg, #10b981, #34d399); }
+.prob-fill.loss { background: linear-gradient(90deg, #ef4444, #f87171); }
+
+/* Expectancy in Card */
+.expectancy {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.expectancy.positive {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
+.expectancy.negative {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.scenario-badge {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.card-footer {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #64748b;
+  padding-top: 0.5rem;
+  border-top: 1px solid #334155;
+}
+
+/* ============================================================
+   RIGHT PANEL (Analysis Detail)
+   ============================================================ */
+.right-panel {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 1.5rem;
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+}
+
+.right-panel h3 {
+  margin-bottom: 1rem;
+  color: #f8fafc;
+}
+
+.loading-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #94a3b8;
+}
+
+.no-selection {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  color: #64748b;
+  text-align: center;
+}
+
+.no-selection-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.no-selection .hint {
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+  color: #475569;
+}
+
+.capital-display {
+  background: rgba(59, 130, 246, 0.1);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+/* Verdict Box */
+.verdict-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-radius: 12px;
+  border: 2px solid;
+  margin-bottom: 1rem;
+}
+
+.verdict-text {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.confidence-text {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+/* Probabilities Section */
+.probs-section {
+  margin-bottom: 1rem;
+}
+
+.prob-display {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.prob-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.prob-label {
+  width: 40px;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.prob-bar-large {
+  flex: 1;
+  height: 10px;
+  background: #334155;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.prob-value {
+  width: 50px;
+  text-align: right;
+  font-weight: 500;
+}
+
+/* NEW: Metrics Section (Expectancy + Readiness) */
+.metrics-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.metric-card {
+  padding: 1rem;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.metric-card.positive {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.metric-card.negative {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.metric-label {
+  display: block;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-bottom: 0.25rem;
+}
+
+.metric-value {
+  display: block;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.metric-card.positive .metric-value { color: #34d399; }
+.metric-card.negative .metric-value { color: #f87171; }
+
+.metric-status {
+  display: block;
+  font-size: 0.7rem;
+  margin-top: 0.25rem;
+  opacity: 0.8;
+}
+
+/* Scenarios Section */
+.scenarios-section {
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #334155;
+}
+
+.scenarios-section h4 {
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+.scenario-card {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.scenario-card.critical { background: rgba(239, 68, 68, 0.2); }
+.scenario-card.high { background: rgba(245, 158, 11, 0.2); }
+.scenario-card.medium { background: rgba(59, 130, 246, 0.2); }
+.scenario-card.low { background: rgba(100, 116, 139, 0.2); }
+
+.scenario-icon {
+  font-size: 1.25rem;
+}
+
+.scenario-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.scenario-message {
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+/* Reasoning Section */
+.reasoning-section,
+.warnings-section,
+.forecast-section,
+.risk-section,
+.action-section,
+.regime-section {
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #334155;
+}
+
+.reasoning-section h4,
+.warnings-section h4,
+.forecast-section h4,
+.risk-section h4,
+.action-section h4,
+.regime-section h4 {
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+.reasoning-item {
+  padding: 0.5rem 0.75rem;
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.warning-item {
+  padding: 0.5rem 0.75rem;
+  background: rgba(245, 158, 11, 0.15);
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+  color: #fbbf24;
+}
+
+/* Forecast Targets */
+.targets {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.target {
+  text-align: center;
+  padding: 0.75rem;
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 8px;
+}
+
+.target span:first-child {
+  display: block;
+  font-size: 0.7rem;
+  color: #94a3b8;
+  margin-bottom: 0.25rem;
+}
+
+.target.bull span:last-child { color: #10b981; font-weight: 600; }
+.target.current span:last-child { color: #f8fafc; font-weight: 600; }
+.target.bear span:last-child { color: #ef4444; font-weight: 600; }
+
+/* Risk Grid */
+.risk-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.risk-item {
+  background: rgba(15, 23, 42, 0.6);
+  padding: 0.6rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.risk-item span:first-child {
+  display: block;
+  font-size: 0.7rem;
+  color: #94a3b8;
+  margin-bottom: 0.2rem;
+}
+
+.risk-item.win span:last-child { color: #10b981; }
+.risk-item.loss span:last-child { color: #ef4444; }
+
+/* Action Box */
+.action-box {
+  background: rgba(15, 23, 42, 0.6);
+  padding: 1rem;
+  border-radius: 10px;
+}
+
+.action-name {
+  font-weight: 700;
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+  color: #f8fafc;
+}
+
+.action-message {
+  font-size: 0.9rem;
+  color: #94a3b8;
+  margin-bottom: 0.5rem;
+}
+
+.next-check {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin-bottom: 0.5rem;
+}
+
+.conditions {
+  margin-top: 0.5rem;
+}
+
+.condition-item {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-bottom: 0.25rem;
+}
+
+/* Regime Section */
+.regime-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.regime-badge {
+  padding: 0.3rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.regime-badge.trending { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+.regime-badge.ranging { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+.regime-badge.transitioning { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
+.regime-badge.unknown { background: rgba(100, 116, 139, 0.2); color: #64748b; }
+
+.regime-recommendation {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 1400px) {
+  .content {
+    grid-template-columns: 250px 1fr 320px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .content {
+    grid-template-columns: 1fr 1fr;
+  }
+  
+  .left-panel {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  
+  .main-panel {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  
+  .right-panel {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    max-height: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .content {
+    grid-template-columns: 1fr;
+  }
+  
+  .header {
+    flex-direction: column;
+    gap: 1rem;
+  }
+  
+  .signals-grid {
+    grid-template-columns: 1fr;
+  }
+}

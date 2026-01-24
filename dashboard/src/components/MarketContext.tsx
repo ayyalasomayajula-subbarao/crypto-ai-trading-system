@@ -16,6 +16,15 @@ interface Props {
 }
 
 const MarketContext: React.FC<Props> = ({ btc }) => {
+  if (!btc) {
+    return (
+      <div className="market-context">
+        <h3>₿ BTC Context</h3>
+        <div className="loading">Loading market data...</div>
+      </div>
+    );
+  }
+
   const getTrendIcon = (trend: string): string => {
     switch (trend) {
       case 'UP': return '📈';
@@ -44,9 +53,9 @@ const MarketContext: React.FC<Props> = ({ btc }) => {
       
       {/* BTC Price */}
       <div className="btc-price-section">
-        <div className="btc-price">${btc.price.toLocaleString()}</div>
-        <div className={`btc-change ${btc.change_24h >= 0 ? 'positive' : 'negative'}`}>
-          {btc.change_24h >= 0 ? '+' : ''}{btc.change_24h.toFixed(2)}% (24h)
+        <div className="btc-price">${(btc.price ?? 0).toLocaleString()}</div>
+        <div className={`btc-change ${(btc.change_24h ?? 0) >= 0 ? 'positive' : 'negative'}`}>
+          {(btc.change_24h ?? 0) >= 0 ? '+' : ''}{(btc.change_24h ?? 0).toFixed(2)}% (24h)
         </div>
       </div>
 
@@ -96,12 +105,12 @@ const MarketContext: React.FC<Props> = ({ btc }) => {
       <div className="trend-strength">
         <span className="strength-label">Strength:</span>
         <div className="strength-bar">
-          <div 
+          <div
             className="strength-fill"
-            style={{ width: `${btc.strength}%` }}
+            style={{ width: `${btc.strength ?? 0}%` }}
           />
         </div>
-        <span className="strength-value">{btc.strength.toFixed(1)}%</span>
+        <span className="strength-value">{(btc.strength ?? 0).toFixed(1)}%</span>
       </div>
 
       {/* Alts Support */}
