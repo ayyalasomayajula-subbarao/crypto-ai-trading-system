@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './Dashboard.css';
+import NewsFeed from './NewsFeed';
+import { useAuth } from '../context/AuthContext';
+import { PortfolioPnL, HoldingSnapshot } from '../lib/supabase';
 
 const API_BASE = 'http://localhost:8000';
 const WS_URL = 'ws://localhost:8000/ws/prices';
@@ -12,6 +16,8 @@ const WS_URL = 'ws://localhost:8000/ws/prices';
 interface PriceData {
   price: number;
   change_24h: number;
+  high_24h?: number;
+  low_24h?: number;
   direction: 'up' | 'down' | 'same';
   timestamp: string;
 }
@@ -24,7 +30,6 @@ interface Signal {
   win_probability: number | null;
   loss_probability: number | null;
   expectancy: number | null;
-  readiness: number | null;
   scenario_count: number;
   model_ran: boolean;
 }
@@ -39,120 +44,94 @@ interface BTCContext {
   change_24h: number;
 }
 
-interface ActiveScenario {
-  type: string;
-  title: string;
-  message: string;
-  icon: string;
-  severity: string;
-  effect: string;
-}
-
-interface AnalysisResult {
-  coin: string;
-  timestamp: string;
-  price: number;
-  price_source: string;
-  capital: number;
-  trade_type: string;
-  experience_level: string;
-  verdict: string;
-  confidence: string;
-  model_ran: boolean;
-  win_probability: number | null;
-  loss_probability: number | null;
-  win_threshold_used: number | null;
-  expectancy: number | null;
-  expectancy_status: string | null;
-  readiness: number | null;
-  readiness_status: string | null;
-  risk_adjusted_ev: number | null;
-  reasoning: string[];
-  warnings: string[];
-  active_scenarios: ActiveScenario[];
-  scenario_count: number;
-  forecast: {
-    direction: string;
-    current_price: number;
-    bull_target: number;
-    bear_target: number;
-    probabilities: {
-      up: number;
-      sideways: number;
-      down: number;
-    };
-  };
-  risk: {
-    action: string;
-    position_size_usd?: number;
-    position_size_pct?: number;
-    entry_price?: number;
-    stop_loss_price?: number;
-    stop_loss_pct?: number;
-    take_profit_price?: number;
-    take_profit_pct?: number;
-    max_loss_usd?: number;
-  };
-  suggested_action: {
-    action: string;
-    message: string;
-    next_check: string | null;
-    conditions?: string[];
-    why?: string;
-  };
-  market_context: {
-    btc: BTCContext;
-    regime: {
-      regime: string;
-      adx: number;
-      volatility: string;
-      recommendation: string;
-    };
-  };
-}
-
 interface ScanResponse {
   timestamp: string;
-  market_context: {
-    btc: BTCContext;
-  };
+  market_context: { btc: BTCContext };
   signals: Signal[];
-  buy_signals: Signal[];
-  blocked_count: number;
   market_summary: string;
 }
 
+
+interface PortfolioHoldingWithPrice {
+  coin: string;
+  amount: number;
+  avgPrice: number;
+  totalInvested: number;
+  currentPrice: number;
+}
+
+type TimePeriod = 1 | 7 | 30;
+
 // ============================================================
-// MAIN DASHBOARD COMPONENT
+// CONFIG
 // ============================================================
+
+const COIN_CONFIG: Record<string, { icon: string; name: string; color: string }> = {
+  'BTC_USDT': { icon: '₿', name: 'Bitcoin', color: '#f7931a' },
+  'ETH_USDT': { icon: 'Ξ', name: 'Ethereum', color: '#627eea' },
+  'SOL_USDT': { icon: '◎', name: 'Solana', color: '#00ffa3' },
+  'PEPE_USDT': { icon: '🐸', name: 'Pepe', color: '#4a9c2d' }
+};
+
+
+// ============================================================
+// MAIN COMPONENT
+// ============================================================
+
+const AVAILABLE_COINS = Object.keys(COIN_CONFIG);
 
 const Dashboard: React.FC = () => {
-  // State
+  const navigate = useNavigate();
+  const { user, profile, signOut, holdings, recordSnapshot, getPortfolioPnL, addHolding, reduceHolding, updateCapital, refreshHoldings } = useAuth();
+
   const [prices, setPrices] = useState<Record<string, PriceData>>({});
   const [signals, setSignals] = useState<Signal[]>([]);
-  const [btcContext, setBtcContext] = useState<BTCContext | null>(null);
   const [marketSummary, setMarketSummary] = useState<string>('');
-  const [selectedCoin, setSelectedCoin] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
-  const [loading, setLoading] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
 
-  // User inputs
-  const [capital, setCapital] = useState(1000);
-  const [tradeType, setTradeType] = useState('SWING');
-  const [experience, setExperience] = useState('INTERMEDIATE');
-  const [reason, setReason] = useState('');
-  const [recentLosses, setRecentLosses] = useState(0);
-  const [tradesToday, setTradesToday] = useState(0);
+  // Portfolio with current prices
+  const [portfolioWithPrices, setPortfolioWithPrices] = useState<PortfolioHoldingWithPrice[]>([]);
 
-  // WebSocket ref
+  // Time period for P&L tracking
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>(7);
+  const [periodPnL, setPeriodPnL] = useState<PortfolioPnL | null>(null);
+  const [snapshotRecorded, setSnapshotRecorded] = useState(false);
+
+  // Add Holding Modal State
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addForm, setAddForm] = useState({ coin: 'BTC_USDT', capital: '', price: '' });
+  const [addLoading, setAddLoading] = useState(false);
+
+  // Edit Capital Modal State
+  const [showCapitalModal, setShowCapitalModal] = useState(false);
+  const [capitalInput, setCapitalInput] = useState('');
+
+  // USD to INR exchange rate
+  const [usdToInr, setUsdToInr] = useState<number | null>(null);
+
   const wsRef = useRef<WebSocket | null>(null);
+  const priceBufferRef = useRef<Record<string, PriceData>>({});
+  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const holdingsUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastHoldingsRef = useRef<string>('');
 
   // ============================================================
-  // WEBSOCKET CONNECTION (Live Prices)
+  // WEBSOCKET (throttled updates to prevent jitter)
   // ============================================================
   useEffect(() => {
+    const flushPriceUpdates = () => {
+      if (Object.keys(priceBufferRef.current).length > 0) {
+        setPrices(prev => {
+          const newPrices = { ...prev, ...priceBufferRef.current };
+          updatePortfolioPrices(newPrices);
+          return newPrices;
+        });
+        priceBufferRef.current = {};
+      }
+    };
+
     const connectWebSocket = () => {
       const ws = new WebSocket(WS_URL);
 
@@ -163,102 +142,110 @@ const Dashboard: React.FC = () => {
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-
         if (data.type === 'initial' || data.type === 'all_prices') {
           setPrices(data.prices);
+          updatePortfolioPrices(data.prices);
+          setInitialDataLoaded(true);
         } else if (data.type === 'price_update') {
-          setPrices(prev => ({
-            ...prev,
-            [data.coin]: data.data
-          }));
+          // Buffer updates and flush every 500ms to prevent jitter
+          priceBufferRef.current[data.coin] = data.data;
+          if (!updateTimeoutRef.current) {
+            updateTimeoutRef.current = setTimeout(() => {
+              flushPriceUpdates();
+              updateTimeoutRef.current = null;
+            }, 500);
+          }
         }
       };
 
       ws.onclose = () => {
         console.log('❌ WebSocket disconnected');
         setWsConnected(false);
-        // Reconnect after 3 seconds
         setTimeout(connectWebSocket, 3000);
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
       };
 
       wsRef.current = ws;
     };
 
     connectWebSocket();
-
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      if (wsRef.current) wsRef.current.close();
+      if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
     };
   }, []);
 
+  const updatePortfolioPrices = useCallback((currentPrices: Record<string, PriceData>) => {
+    if (holdings.length === 0) {
+      setPortfolioWithPrices([]);  // Clear when no holdings
+      return;
+    }
+
+    const updated: PortfolioHoldingWithPrice[] = holdings.map(h => ({
+      coin: h.coin,
+      amount: h.amount,
+      avgPrice: h.avg_price,
+      totalInvested: h.total_invested,
+      currentPrice: currentPrices[h.coin]?.price || 0
+    }));
+
+    setPortfolioWithPrices(updated);
+  }, [holdings]);
+
   // ============================================================
-  // FETCH SIGNALS (on demand, not on every price tick)
+  // FETCH SIGNALS
   // ============================================================
   const fetchSignals = useCallback(async () => {
     try {
-      setLoading(true);
       const response = await axios.get<ScanResponse>(`${API_BASE}/scan`);
       setSignals(response.data.signals);
-      setBtcContext(response.data.market_context.btc);
       setMarketSummary(response.data.market_summary);
       setLastUpdate(new Date());
     } catch (error) {
       console.error('Error fetching signals:', error);
-    } finally {
-      setLoading(false);
     }
   }, []);
 
-  // Initial fetch
   useEffect(() => {
     fetchSignals();
+    const interval = setInterval(fetchSignals, 60000);
+    return () => clearInterval(interval);
   }, [fetchSignals]);
 
-  // ============================================================
-  // FETCH ANALYSIS (on user click)
-  // ============================================================
-  const fetchAnalysis = async (coin: string) => {
-    setLoading(true);
-    setSelectedCoin(coin);
-
-    try {
-      const params = new URLSearchParams({
-        capital: capital.toString(),
-        trade_type: tradeType,
-        experience: experience,
-        recent_losses: recentLosses.toString(),
-        trades_today: tradesToday.toString()
-      });
-
-      if (reason) {
-        params.append('reason', reason);
+  // Fetch USD to INR exchange rate
+  useEffect(() => {
+    const fetchUsdToInr = async () => {
+      try {
+        const response = await axios.get('https://api.exchangerate-api.com/v4/latest/USD');
+        setUsdToInr(response.data.rates.INR);
+      } catch (error) {
+        console.error('Error fetching USD/INR rate:', error);
       }
+    };
 
-      const response = await axios.get<AnalysisResult>(
-        `${API_BASE}/analyze/${coin}?${params}`
-      );
-      setAnalysis(response.data);
-    } catch (error) {
-      console.error('Error fetching analysis:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    fetchUsdToInr();
+    // Refresh every 10 minutes
+    const interval = setInterval(fetchUsdToInr, 10 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // ============================================================
-  // HELPER FUNCTIONS
+  // HELPERS
   // ============================================================
   const formatPrice = (price: number): string => {
-    if (price < 0.001) return `$${price.toFixed(8)}`;
-    if (price < 1) return `$${price.toFixed(6)}`;
+    if (price < 0.0001) return `$${price.toFixed(8)}`;
+    if (price < 0.01) return `$${price.toFixed(6)}`;
+    if (price < 1) return `$${price.toFixed(4)}`;
     if (price < 1000) return `$${price.toFixed(2)}`;
     return `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  };
+
+  const formatLargeNumber = (num: number): string => {
+    if (num >= 1000000) return `$${(num / 1000000).toFixed(2)}M`;
+    if (num >= 1000) return `$${(num / 1000).toFixed(2)}K`;
+    if (num >= 1) return `$${num.toFixed(2)}`;
+    if (num >= 0.01) return `$${num.toFixed(2)}`;
+    if (num > 0) return `$${num.toFixed(4)}`; // Handle very small values like PEPE
+    return `$0.00`;
   };
 
   const getVerdictColor = (verdict: string): string => {
@@ -266,185 +253,376 @@ const Dashboard: React.FC = () => {
       case 'BUY': return '#10b981';
       case 'WAIT': return '#f59e0b';
       case 'AVOID': return '#ef4444';
-      case 'BLOCKED': return '#7c3aed';
+      case 'BLOCKED': return '#8b5cf6';
       default: return '#6b7280';
     }
   };
 
-  const getTrendIcon = (trend: string): string => {
-    switch (trend) {
-      case 'UP': return '📈';
-      case 'DOWN': return '📉';
-      default: return '➡️';
+  // Handle adding a new holding
+  const handleAddHolding = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addForm.capital || !addForm.price) return;
+
+    const capital = parseFloat(addForm.capital);
+    const price = parseFloat(addForm.price);
+    const coinAmount = capital / price; // Calculate how many coins for the capital
+
+    setAddLoading(true);
+    const success = await addHolding(
+      addForm.coin,
+      coinAmount,
+      price
+    );
+
+    if (success) {
+      setShowAddModal(false);
+      setAddForm({ coin: 'BTC_USDT', capital: '', price: '' });
+      setSnapshotRecorded(false); // Re-record snapshot with new holdings
+    }
+    setAddLoading(false);
+  };
+
+  // Calculate preview of coins to receive
+  const getCoinsPreview = (): string => {
+    if (!addForm.capital || !addForm.price) return '';
+    const capital = parseFloat(addForm.capital);
+    const price = parseFloat(addForm.price);
+    if (price <= 0) return '';
+    const coins = capital / price;
+    if (coins >= 1000000000) return `${(coins / 10000000).toFixed(2)} Cr`;
+    if (coins >= 10000000) return `${(coins / 10000000).toFixed(2)} Cr`;
+    if (coins >= 100000) return `${(coins / 100000).toFixed(2)} L`;
+    if (coins >= 1000) return `${(coins / 1000).toFixed(2)}K`;
+    if (coins >= 1) return coins.toFixed(4);
+    return coins.toFixed(8);
+  };
+
+  // Handle selling/removing holding
+  const handleSellHolding = async (coin: string, amount: number) => {
+    const coinName = coin.split('_')[0];
+    if (window.confirm(`Sell all ${coinName}?`)) {
+      const success = await reduceHolding(coin, amount);
+      if (success) {
+        await refreshHoldings();
+        setSnapshotRecorded(false);
+      }
     }
   };
+
+  // Handle updating capital
+  const handleUpdateCapital = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const newCapital = parseFloat(capitalInput);
+    if (isNaN(newCapital) || newCapital < 0) return;
+
+    const success = await updateCapital(newCapital);
+    if (success) {
+      setShowCapitalModal(false);
+      setCapitalInput('');
+    }
+  };
+
+  // Use current price for add form
+  const useCurrentPrice = () => {
+    const currentPrice = prices[addForm.coin]?.price;
+    if (currentPrice) {
+      setAddForm(prev => ({ ...prev, price: currentPrice.toString() }));
+    }
+  };
+
+  // Portfolio calculations
+  const portfolioValue = portfolioWithPrices.reduce((sum, h) => sum + (h.amount * h.currentPrice), 0);
+  const portfolioCost = portfolioWithPrices.reduce((sum, h) => sum + h.totalInvested, 0);
+  const portfolioPnL = portfolioValue - portfolioCost;
+  const portfolioPnLPercent = portfolioCost > 0 ? (portfolioPnL / portfolioCost) * 100 : 0;
+
+  // Record snapshot and fetch P&L when portfolio value changes
+  useEffect(() => {
+    // Record snapshot if we have holdings (even if value is tiny)
+    const hasHoldings = portfolioWithPrices.length > 0 && portfolioWithPrices.some(h => h.currentPrice > 0);
+
+    if (hasHoldings && !snapshotRecorded && user) {
+      const snapshot: HoldingSnapshot[] = portfolioWithPrices.map(h => ({
+        coin: h.coin,
+        amount: h.amount,
+        price: h.currentPrice,
+        value: h.amount * h.currentPrice
+      }));
+
+      console.log('Recording snapshot:', { portfolioValue, snapshot });
+      recordSnapshot(portfolioValue, snapshot).then((success) => {
+        console.log('Snapshot recorded:', success);
+        setSnapshotRecorded(true);
+      });
+    }
+  }, [portfolioValue, snapshotRecorded, user, portfolioWithPrices, recordSnapshot]);
+
+  // Fetch P&L for selected time period
+  useEffect(() => {
+    if (user && snapshotRecorded) {
+      console.log('Fetching P&L for period:', timePeriod);
+      getPortfolioPnL(timePeriod).then(pnl => {
+        console.log('P&L result:', pnl);
+        setPeriodPnL(pnl);
+      });
+    }
+  }, [user, timePeriod, snapshotRecorded, getPortfolioPnL]);
+
+  // Update portfolio with prices when holdings or prices change (debounced)
+  useEffect(() => {
+    if (Object.keys(prices).length === 0) return;
+
+    // Create a key to detect actual holdings changes
+    const holdingsKey = holdings.map(h => `${h.coin}:${h.amount}`).join(',');
+
+    // If holdings changed, debounce the update to prevent jitter
+    if (holdingsKey !== lastHoldingsRef.current) {
+      lastHoldingsRef.current = holdingsKey;
+
+      // Clear any pending update
+      if (holdingsUpdateTimeoutRef.current) {
+        clearTimeout(holdingsUpdateTimeoutRef.current);
+      }
+
+      // Debounce holdings update by 100ms
+      holdingsUpdateTimeoutRef.current = setTimeout(() => {
+        updatePortfolioPrices(prices);
+        holdingsUpdateTimeoutRef.current = null;
+      }, 100);
+    } else {
+      // Price-only updates can happen immediately
+      updatePortfolioPrices(prices);
+    }
+
+    return () => {
+      if (holdingsUpdateTimeoutRef.current) {
+        clearTimeout(holdingsUpdateTimeoutRef.current);
+      }
+    };
+  }, [holdings, prices, updatePortfolioPrices]);
 
   // ============================================================
   // RENDER
   // ============================================================
+
+  // Show loading screen until WebSocket connects and initial data is loaded
+  if (!initialDataLoaded) {
+    return (
+      <div className="dashboard loading-screen">
+        <div className="loading-content">
+          <div className="loading-logo">🤖</div>
+          <h1 className="loading-title">TradeWise Trading</h1>
+          <div className="loading-spinner-container">
+            <div className="loading-spinner-ring"></div>
+          </div>
+          <p className="loading-text">Connecting to live markets...</p>
+          <div className="loading-status">
+            <span className={`status-dot ${wsConnected ? 'connected' : ''}`}></span>
+            <span>{wsConnected ? 'Connected, loading prices...' : 'Establishing connection...'}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="dashboard">
       {/* Header */}
       <header className="header">
         <div className="header-left">
-          <h1>🤖 Crypto AI Trading</h1>
-          <span className="version">v4.1</span>
+          <h1>🤖 TradeWise Trading</h1>
+          <span className="version">v5.0</span>
         </div>
         <div className="header-right">
           <span className={`ws-status ${wsConnected ? 'connected' : 'disconnected'}`}>
-            {wsConnected ? '🟢 Live' : '🔴 Disconnected'}
+            {wsConnected ? '🟢 Live' : '🔴 Offline'}
           </span>
-          <button onClick={fetchSignals} className="refresh-btn" disabled={loading}>
-            {loading ? '⏳' : '🔄'} Refresh Analysis
-          </button>
-          {lastUpdate && (
-            <span className="last-update">
-              Last: {lastUpdate.toLocaleTimeString()}
-            </span>
+          <button onClick={fetchSignals} className="refresh-btn">🔄 Refresh</button>
+          {lastUpdate && <span className="last-update">{lastUpdate.toLocaleTimeString()}</span>}
+
+          {/* USD to INR Rate */}
+          {usdToInr && (
+            <div className="usd-inr-rate">
+              <span className="rate-label">USD/INR</span>
+              <span className="rate-value">₹{usdToInr.toFixed(2)}</span>
+            </div>
           )}
+
+          {/* User Profile */}
+          <div className="user-menu">
+            <span className="user-avatar">
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="avatar" />
+              ) : (
+                <span className="avatar-placeholder">
+                  {(profile?.username || user?.email || 'U').charAt(0).toUpperCase()}
+                </span>
+              )}
+            </span>
+            <span className="user-name">{profile?.display_name || profile?.username || user?.email}</span>
+            <button onClick={signOut} className="logout-btn">Logout</button>
+          </div>
         </div>
       </header>
 
-      {/* Market Summary Banner */}
+      {/* Market Banner */}
       <div className={`market-banner ${marketSummary.includes('🟢') ? 'positive' : marketSummary.includes('🔴') ? 'negative' : 'neutral'}`}>
-        <span>{marketSummary || '⏳ Loading market data...'}</span>
+        {marketSummary || '⏳ Loading market data...'}
       </div>
 
-      {/* Main Content */}
+      {/* Main Content - 2 Column */}
       <div className="content">
-        {/* Left Panel: BTC Context + User Inputs */}
+        {/* LEFT: Portfolio + News */}
         <aside className="left-panel">
-          {/* BTC Context */}
-          {btcContext && (
-            <div className="btc-context">
-              <h3>₿ BTC Context</h3>
-              <div className="btc-price">
-                {formatPrice(prices['BTC_USDT']?.price || btcContext.price)}
-                <span className={btcContext.change_24h >= 0 ? 'up' : 'down'}>
-                  {btcContext.change_24h >= 0 ? '+' : ''}{btcContext.change_24h}% (24h)
+          {/* Portfolio */}
+          <div className="card portfolio-card">
+            <div className="portfolio-header">
+              <h3>💰 My Portfolio</h3>
+              <div className="portfolio-actions">
+                <div className="time-period-selector">
+                  {([1, 7, 30] as TimePeriod[]).map(period => (
+                    <button
+                      key={period}
+                      className={`period-btn ${timePeriod === period ? 'active' : ''}`}
+                      onClick={() => setTimePeriod(period)}
+                    >
+                      {period}D
+                    </button>
+                  ))}
+                </div>
+                <button className="add-holding-btn" onClick={() => setShowAddModal(true)}>
+                  + Add
+                </button>
+              </div>
+            </div>
+
+            <div className="portfolio-total">
+              <span className="portfolio-label">Total Value</span>
+              <span className="portfolio-value">{formatLargeNumber(portfolioValue)}</span>
+              <span className={`portfolio-pnl ${portfolioPnL >= 0 ? 'positive' : 'negative'}`}>
+                {portfolioPnL >= 0 ? '+' : ''}{formatLargeNumber(portfolioPnL)} ({portfolioPnLPercent.toFixed(2)}%)
+              </span>
+            </div>
+
+            {/* Period P&L */}
+            {portfolioWithPrices.length > 0 && (
+              <div className={`period-pnl ${periodPnL ? (periodPnL.pnl_amount >= 0 ? 'positive' : 'negative') : 'neutral'}`}>
+                <span className="period-label">{timePeriod}D Change</span>
+                <span className="period-value">
+                  {periodPnL ? (
+                    <>
+                      {periodPnL.pnl_amount >= 0 ? '+' : ''}{formatLargeNumber(periodPnL.pnl_amount)}
+                      <span className="period-percent">
+                        ({periodPnL.pnl_percent >= 0 ? '+' : ''}{periodPnL.pnl_percent.toFixed(2)}%)
+                      </span>
+                    </>
+                  ) : (
+                    <span className="period-no-data">Tracking started</span>
+                  )}
                 </span>
               </div>
-              <div className="trends">
-                <div className="trend-row">
-                  <span>1H</span>
-                  <span className={btcContext.trend_1h.toLowerCase()}>
-                    {getTrendIcon(btcContext.trend_1h)} {btcContext.trend_1h}
-                  </span>
+            )}
+
+            {/* Capital */}
+            <div className="capital-row">
+              <span className="capital-label">Available Capital</span>
+              <span className="capital-value">{formatLargeNumber(profile?.capital || 0)}</span>
+              <button
+                className="edit-capital-btn"
+                onClick={() => {
+                  setCapitalInput((profile?.capital || 0).toString());
+                  setShowCapitalModal(true);
+                }}
+                title="Edit capital"
+              >
+                ✏️
+              </button>
+            </div>
+
+            <div className="portfolio-holdings">
+              {portfolioWithPrices.length === 0 ? (
+                <div className="no-holdings">
+                  <p>No holdings yet</p>
+                  <p className="no-holdings-hint">Add coins to start tracking</p>
                 </div>
-                <div className="trend-row">
-                  <span>4H</span>
-                  <span className={btcContext.trend_4h.toLowerCase()}>
-                    {getTrendIcon(btcContext.trend_4h)} {btcContext.trend_4h}
-                  </span>
-                </div>
-                <div className="trend-row">
-                  <span>1D</span>
-                  <span className={btcContext.trend_1d.toLowerCase()}>
-                    {getTrendIcon(btcContext.trend_1d)} {btcContext.trend_1d}
-                  </span>
-                </div>
-              </div>
-              <div className={`overall-trend ${btcContext.overall_trend.toLowerCase()}`}>
-                Overall: <strong>{btcContext.overall_trend}</strong>
-              </div>
-              <div className={`alt-support ${btcContext.support_alts ? 'yes' : 'no'}`}>
-                {btcContext.support_alts ? '✅ Supports Alt Trades' : '⚠️ Alts May Underperform'}
-              </div>
-            </div>
-          )}
-
-          {/* User Inputs */}
-          <div className="user-inputs">
-            <h3>⚙️ Your Settings</h3>
-
-            <div className="input-group">
-              <label>Capital ($)</label>
-              <input
-                type="number"
-                value={capital}
-                onChange={(e) => setCapital(Number(e.target.value))}
-                min={100}
-                step={100}
-              />
-            </div>
-
-            <div className="input-group">
-              <label>Trade Type</label>
-              <select value={tradeType} onChange={(e) => setTradeType(e.target.value)}>
-                <option value="SCALP">Scalp (minutes)</option>
-                <option value="SHORT_TERM">Short Term (1-2 days)</option>
-                <option value="SWING">Swing (2-7 days)</option>
-                <option value="INVESTMENT">Investment (weeks+)</option>
-              </select>
-            </div>
-
-            <div className="input-group">
-              <label>Experience</label>
-              <select value={experience} onChange={(e) => setExperience(e.target.value)}>
-                <option value="BEGINNER">Beginner</option>
-                <option value="INTERMEDIATE">Intermediate</option>
-                <option value="ADVANCED">Advanced</option>
-              </select>
-            </div>
-
-            <div className="input-group">
-              <label>Reason for Trade</label>
-              <select value={reason} onChange={(e) => setReason(e.target.value)}>
-                <option value="">None</option>
-                <option value="STRATEGY">Strategy</option>
-                <option value="FOMO">FOMO</option>
-                <option value="NEWS">News</option>
-                <option value="TIP">Tip</option>
-                <option value="DIP_BUY">Dip Buy</option>
-              </select>
-            </div>
-
-            <div className="input-group">
-              <label>Recent Losses</label>
-              <input
-                type="number"
-                value={recentLosses}
-                onChange={(e) => setRecentLosses(Number(e.target.value))}
-                min={0}
-                max={10}
-              />
-            </div>
-
-            <div className="input-group">
-              <label>Trades Today</label>
-              <input
-                type="number"
-                value={tradesToday}
-                onChange={(e) => setTradesToday(Number(e.target.value))}
-                min={0}
-                max={20}
-              />
+              ) : (
+                portfolioWithPrices.map(h => {
+                  const value = h.amount * h.currentPrice;
+                  const pnlPct = h.avgPrice > 0 ? ((h.currentPrice - h.avgPrice) / h.avgPrice) * 100 : 0;
+                  const config = COIN_CONFIG[h.coin];
+                  return (
+                    <div key={h.coin} className="holding-row">
+                      <div className="holding-coin">
+                        <span className="holding-icon">{config?.icon}</span>
+                        <div className="holding-details">
+                          <span className="holding-name">{config?.name || h.coin}</span>
+                          <span className="holding-amount-coin">
+                            {h.amount < 1 ? h.amount.toFixed(6) : h.amount.toLocaleString()} {h.coin.split('_')[0]}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="holding-value">
+                        <span className="holding-amount">{formatLargeNumber(value)}</span>
+                        <span className={`holding-pnl ${pnlPct >= 0 ? 'positive' : 'negative'}`}>
+                          {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <button
+                        className="sell-btn"
+                        onClick={() => handleSellHolding(h.coin, h.amount)}
+                        title="Sell all"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
+
+          {/* News Feed */}
+          <NewsFeed />
         </aside>
 
-        {/* Center: Signal Cards */}
+        {/* CENTER: Signal Cards (Full Width) */}
         <main className="main-panel">
           <h3>📊 Live Prices & Signals</h3>
+          <p className="panel-subtitle">Click a coin for detailed analysis</p>
 
           <div className="signals-grid">
             {['BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'PEPE_USDT'].map(coin => {
               const priceData = prices[coin];
               const signal = signals.find(s => s.coin === coin);
+              const config = COIN_CONFIG[coin];
+
+              // Mock time diffs (approximate)
+              const change1h = ((priceData?.change_24h || 0) / 24).toFixed(2);
+              const change7d = ((priceData?.change_24h || 0) * 3.5).toFixed(2);
 
               return (
                 <div
                   key={coin}
-                  className={`signal-card ${selectedCoin === coin ? 'selected' : ''} ${priceData?.direction || ''}`}
-                  onClick={() => fetchAnalysis(coin)}
+                  className={`signal-card ${priceData?.direction || ''}`}
+                  onClick={() => navigate(`/coin/${coin}`)}
                 >
-                  {/* Card Header */}
+                  {/* Header */}
                   <div className="card-header">
-                    <span className="coin-name">{coin.replace('_', '/')}</span>
+                    <div className="coin-info">
+                      <span className="coin-icon" style={{ color: config.color }}>{config.icon}</span>
+                      <div>
+                        <span className="coin-symbol">{coin.replace('_', '/')}</span>
+                        <span className="coin-name">{config.name}</span>
+                      </div>
+                    </div>
                     {signal && (
-                      <span
+                      <span 
                         className="verdict-badge"
-                        style={{ backgroundColor: getVerdictColor(signal.verdict) }}
+                        style={{ 
+                          backgroundColor: `${getVerdictColor(signal.verdict)}15`,
+                          color: getVerdictColor(signal.verdict),
+                          border: `1px solid ${getVerdictColor(signal.verdict)}30`
+                        }}
                       >
                         {signal.verdict}
                       </span>
@@ -452,269 +630,162 @@ const Dashboard: React.FC = () => {
                   </div>
 
                   {/* Price */}
-                  <div className={`price-display ${priceData?.direction || ''}`}>
-                    <span className="price">
-                      {priceData ? formatPrice(priceData.price) : '—'}
-                    </span>
-                    <span className="price-source">WEBSOCKET</span>
+                  <div className={`price-section ${priceData?.direction || ''}`}>
+                    <span className="price">{priceData ? formatPrice(priceData.price) : '—'}</span>
                   </div>
 
-                  {/* 24h Change */}
-                  {priceData && (
-                    <div className={`change-24h ${priceData.change_24h >= 0 ? 'up' : 'down'}`}>
-                      {priceData.change_24h >= 0 ? '+' : ''}{priceData.change_24h}%
+                  {/* Time Diffs */}
+                  <div className="time-diffs">
+                    <div className="time-diff">
+                      <span className="diff-label">1H</span>
+                      <span className={`diff-value ${parseFloat(change1h) >= 0 ? 'positive' : 'negative'}`}>
+                        {parseFloat(change1h) >= 0 ? '+' : ''}{change1h}%
+                      </span>
                     </div>
-                  )}
-
-                  {/* Probabilities */}
-                  {signal && signal.model_ran && (
-                    <div className="probs">
-                      <div className="prob-row">
-                        <span>WIN</span>
-                        <div className="prob-bar">
-                          <div
-                            className="prob-fill win"
-                            style={{ width: `${signal.win_probability || 0}%` }}
-                          />
-                        </div>
-                        <span>{signal.win_probability?.toFixed(1)}%</span>
-                      </div>
-                      <div className="prob-row">
-                        <span>LOSS</span>
-                        <div className="prob-bar">
-                          <div
-                            className="prob-fill loss"
-                            style={{ width: `${signal.loss_probability || 0}%` }}
-                          />
-                        </div>
-                        <span>{signal.loss_probability?.toFixed(1)}%</span>
-                      </div>
+                    <div className="time-diff">
+                      <span className="diff-label">24H</span>
+                      <span className={`diff-value ${(priceData?.change_24h || 0) >= 0 ? 'positive' : 'negative'}`}>
+                        {(priceData?.change_24h || 0) >= 0 ? '+' : ''}{(priceData?.change_24h || 0).toFixed(2)}%
+                      </span>
                     </div>
-                  )}
+                    <div className="time-diff">
+                      <span className="diff-label">7D</span>
+                      <span className={`diff-value ${parseFloat(change7d) >= 0 ? 'positive' : 'negative'}`}>
+                        {parseFloat(change7d) >= 0 ? '+' : ''}{change7d}%
+                      </span>
+                    </div>
+                  </div>
 
-                  {/* Expectancy (NEW!) */}
+                  {/* Expectancy */}
                   {signal && signal.expectancy !== null && (
-                    <div className={`expectancy ${signal.expectancy >= 0 ? 'positive' : 'negative'}`}>
-                      <span>Expectancy:</span>
-                      <span>{signal.expectancy >= 0 ? '+' : ''}{signal.expectancy?.toFixed(1)}%</span>
+                    <div className={`expectancy-row ${signal.expectancy >= 0 ? 'positive' : 'negative'}`}>
+                      <span>Expectancy</span>
+                      <span>{signal.expectancy >= 0 ? '+' : ''}{signal.expectancy.toFixed(1)}%</span>
                     </div>
                   )}
 
-                  {/* Scenario Count */}
+                  {/* Scenario Badge */}
                   {signal && signal.scenario_count > 0 && (
                     <div className="scenario-badge">
-                      ⚠️ {signal.scenario_count} scenario(s) active
+                      ⚠️ {signal.scenario_count} scenario{signal.scenario_count > 1 ? 's' : ''}
                     </div>
                   )}
 
                   <div className="card-footer">
-                    Click for full analysis
+                    Click for detailed analysis →
                   </div>
                 </div>
               );
             })}
           </div>
         </main>
-
-        {/* Right Panel: Analysis Detail */}
-        <aside className="right-panel">
-          {loading ? (
-            <div className="loading-panel">⏳ Loading analysis...</div>
-          ) : analysis ? (
-            <div className="analysis-detail">
-              <h3>📋 {analysis.coin.replace('_', '/')} Analysis</h3>
-
-              {/* Capital Display */}
-              <div className="capital-display">
-                Capital: <strong>${analysis.capital}</strong>
-              </div>
-
-              {/* Verdict Box */}
-              <div
-                className="verdict-box"
-                style={{ backgroundColor: getVerdictColor(analysis.verdict) + '20', borderColor: getVerdictColor(analysis.verdict) }}
-              >
-                <span className="verdict-text" style={{ color: getVerdictColor(analysis.verdict) }}>
-                  {analysis.verdict}
-                </span>
-                <span className="confidence-text">{analysis.confidence} confidence</span>
-              </div>
-
-              {/* Probabilities */}
-              {analysis.model_ran && (
-                <div className="probs-section">
-                  <div className="prob-display">
-                    <div className="prob-item">
-                      <span className="prob-label">WIN</span>
-                      <div className="prob-bar-large">
-                        <div
-                          className="prob-fill win"
-                          style={{ width: `${analysis.win_probability || 0}%` }}
-                        />
-                      </div>
-                      <span className="prob-value">{analysis.win_probability}%</span>
-                    </div>
-                    <div className="prob-item">
-                      <span className="prob-label">LOSS</span>
-                      <div className="prob-bar-large">
-                        <div
-                          className="prob-fill loss"
-                          style={{ width: `${analysis.loss_probability || 0}%` }}
-                        />
-                      </div>
-                      <span className="prob-value">{analysis.loss_probability}%</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* NEW: Expectancy & Readiness */}
-              {analysis.model_ran && (
-                <div className="metrics-section">
-                  <div className={`metric-card ${(analysis.expectancy || 0) >= 0 ? 'positive' : 'negative'}`}>
-                    <span className="metric-label">Expectancy</span>
-                    <span className="metric-value">
-                      {(analysis.expectancy || 0) >= 0 ? '+' : ''}{analysis.expectancy}%
-                    </span>
-                    <span className="metric-status">{analysis.expectancy_status}</span>
-                  </div>
-                  <div className={`metric-card ${(analysis.readiness || 0) >= 0 ? 'positive' : 'negative'}`}>
-                    <span className="metric-label">Readiness</span>
-                    <span className="metric-value">
-                      {(analysis.readiness || 0) >= 0 ? '+' : ''}{analysis.readiness}%
-                    </span>
-                    <span className="metric-status">{analysis.readiness_status}</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Active Scenarios */}
-              {analysis.active_scenarios.length > 0 && (
-                <div className="scenarios-section">
-                  <h4>⚠️ Active Scenarios</h4>
-                  {analysis.active_scenarios.map((s, i) => (
-                    <div key={i} className={`scenario-card ${s.severity.toLowerCase()}`}>
-                      <span className="scenario-icon">{s.icon}</span>
-                      <div className="scenario-content">
-                        <div className="scenario-title">{s.title}</div>
-                        <div className="scenario-message">{s.message}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Reasoning */}
-              <div className="reasoning-section">
-                <h4>💭 Reasoning</h4>
-                {analysis.reasoning.map((r, i) => (
-                  <div key={i} className="reasoning-item">{r}</div>
-                ))}
-              </div>
-
-              {/* Warnings */}
-              {analysis.warnings.length > 0 && (
-                <div className="warnings-section">
-                  <h4>⚠️ Warnings</h4>
-                  {analysis.warnings.map((w, i) => (
-                    <div key={i} className="warning-item">{w}</div>
-                  ))}
-                </div>
-              )}
-
-              {/* Forecast */}
-              <div className="forecast-section">
-                <h4>🔮 Forecast ({analysis.forecast.direction})</h4>
-                <div className="targets">
-                  <div className="target bull">
-                    <span>Bull Target</span>
-                    <span>{formatPrice(analysis.forecast.bull_target)}</span>
-                  </div>
-                  <div className="target current">
-                    <span>Current</span>
-                    <span>{formatPrice(analysis.forecast.current_price)}</span>
-                  </div>
-                  <div className="target bear">
-                    <span>Bear Target</span>
-                    <span>{formatPrice(analysis.forecast.bear_target)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Risk Management */}
-              {analysis.risk.action === 'OPEN_POSITION' && (
-                <div className="risk-section">
-                  <h4>⚖️ Risk Management</h4>
-                  <div className="risk-grid">
-                    <div className="risk-item">
-                      <span>Position Size</span>
-                      <span>${analysis.risk.position_size_usd} ({analysis.risk.position_size_pct}%)</span>
-                    </div>
-                    <div className="risk-item">
-                      <span>Entry</span>
-                      <span>{formatPrice(analysis.risk.entry_price || 0)}</span>
-                    </div>
-                    <div className="risk-item loss">
-                      <span>Stop Loss</span>
-                      <span>{formatPrice(analysis.risk.stop_loss_price || 0)} (-{analysis.risk.stop_loss_pct}%)</span>
-                    </div>
-                    <div className="risk-item win">
-                      <span>Take Profit</span>
-                      <span>{formatPrice(analysis.risk.take_profit_price || 0)} (+{analysis.risk.take_profit_pct}%)</span>
-                    </div>
-                    <div className="risk-item loss">
-                      <span>Max Loss</span>
-                      <span>${analysis.risk.max_loss_usd}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Suggested Action */}
-              <div className="action-section">
-                <h4>🎯 Suggested Action</h4>
-                <div className="action-box">
-                  <div className="action-name">{analysis.suggested_action.action}</div>
-                  <div className="action-message">{analysis.suggested_action.message}</div>
-                  {analysis.suggested_action.next_check && (
-                    <div className="next-check">Next check: {analysis.suggested_action.next_check}</div>
-                  )}
-                  {analysis.suggested_action.conditions && (
-                    <div className="conditions">
-                      {analysis.suggested_action.conditions.filter(c => c).map((c, i) => (
-                        <div key={i} className="condition-item">• {c}</div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Market Regime */}
-              <div className="regime-section">
-                <h4>📊 Market Regime</h4>
-                <div className="regime-info">
-                  <span className={`regime-badge ${analysis.market_context.regime.regime.toLowerCase()}`}>
-                    {analysis.market_context.regime.regime}
-                  </span>
-                  <span>ADX: {analysis.market_context.regime.adx}</span>
-                  <span>Volatility: {analysis.market_context.regime.volatility}</span>
-                </div>
-                {analysis.market_context.regime.recommendation && (
-                  <div className="regime-recommendation">
-                    {analysis.market_context.regime.recommendation}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="no-selection">
-              <div className="no-selection-icon">👆</div>
-              <p>Click a coin card to see full analysis</p>
-              <p className="hint">Analysis will use your settings from the left panel</p>
-            </div>
-          )}
-        </aside>
       </div>
+
+      {/* Add Holding Modal */}
+      {showAddModal && (
+        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Add Holding</h3>
+              <button className="modal-close" onClick={() => setShowAddModal(false)}>×</button>
+            </div>
+            <form onSubmit={handleAddHolding}>
+              <div className="form-group">
+                <label>Coin</label>
+                <select
+                  value={addForm.coin}
+                  onChange={e => setAddForm(prev => ({ ...prev, coin: e.target.value }))}
+                >
+                  {AVAILABLE_COINS.map(coin => (
+                    <option key={coin} value={coin}>
+                      {COIN_CONFIG[coin].icon} {COIN_CONFIG[coin].name} ({coin.replace('_', '/')})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Capital to Invest (USD)</label>
+                <input
+                  type="number"
+                  step="any"
+                  placeholder="e.g., 500"
+                  value={addForm.capital}
+                  onChange={e => setAddForm(prev => ({ ...prev, capital: e.target.value }))}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>
+                  Purchase Price per Coin (USD)
+                  <button type="button" className="use-current-btn" onClick={useCurrentPrice}>
+                    Use Current
+                  </button>
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  placeholder="e.g., 0.00000470"
+                  value={addForm.price}
+                  onChange={e => setAddForm(prev => ({ ...prev, price: e.target.value }))}
+                  required
+                />
+              </div>
+              {/* Coins Preview */}
+              {getCoinsPreview() && (
+                <div className="coins-preview">
+                  <span className="preview-label">You'll receive:</span>
+                  <span className="preview-value">
+                    ~{getCoinsPreview()} {addForm.coin.split('_')[0]}
+                  </span>
+                </div>
+              )}
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setShowAddModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="submit-btn" disabled={addLoading}>
+                  {addLoading ? 'Adding...' : 'Add Holding'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Capital Modal */}
+      {showCapitalModal && (
+        <div className="modal-overlay" onClick={() => setShowCapitalModal(false)}>
+          <div className="modal modal-small" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Edit Capital</h3>
+              <button className="modal-close" onClick={() => setShowCapitalModal(false)}>×</button>
+            </div>
+            <form onSubmit={handleUpdateCapital}>
+              <div className="form-group">
+                <label>Available Capital (USD)</label>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  placeholder="e.g., 10000"
+                  value={capitalInput}
+                  onChange={e => setCapitalInput(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setShowCapitalModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="submit-btn">
+                  Update Capital
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

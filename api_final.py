@@ -1,36 +1,206 @@
 """
-Crypto AI Trading API - v4.1
-With Scenario Engine + WebSocket + Fixed Metrics
+Crypto AI Trading API - v5.0
+Complete Trade-Type-Specific Analysis System
 
-FIXED in v4.1:
-- Replaced confusing "Edge" with clear "Expectancy" and "Readiness"
-- Expectancy = WIN% - LOSS% (is trade profitable?)
-- Readiness = WIN% - Threshold% (how close to entry?)
+FEATURES in v5.0:
+- Trade-type-specific thresholds (Scalp/Short/Swing/Investment)
+- Experience level modifiers
+- Enhanced FOMO detection with trade-type sensitivity
+- ADX/Regime requirements per trade type
+- Complete position sizing based on trade type
+- Educational reasoning for users
 """
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List, Set
+from typing import Optional, List, Dict, Any, Set
 import pandas as pd
 import numpy as np
 import joblib
-import ccxt
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 import asyncio
-import websockets
 import json
-import warnings
-warnings.filterwarnings('ignore')
-
-# Import Scenario Engine (SEPARATE MODULE)
-from engines.scenario_engine import ScenarioEngine, ScenarioDecision
-
 
 # ============================================================
-# ENUMS
+# HELPER FUNCTIONS
+# ============================================================
+
+def sanitize_for_json(obj):
+    """Convert numpy types to Python native types for JSON serialization"""
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif pd.isna(obj):
+        return None
+    return obj
+
+# ============================================================
+# TRADE TYPE CONFIGURATION
+# ============================================================
+
+TRADE_TYPE_CONFIG = {
+    'SCALP': {
+        'name': 'Scalp',
+        'duration_hours': 4,
+        'duration_display': 'Minutes to hours',
+        'description': 'Quick trades capturing small price movements. Requires high win rate and strict discipline.',
+        'risk_level': 'Very High',
+        
+        # Thresholds (stricter for scalping)
+        'base_win_threshold': 0.55,
+        'min_expectancy': 5.0,
+        'max_loss_probability': 40.0,
+        
+        # Risk Management
+        'position_size_pct': 0.08,
+        'stop_loss_pct': 1.5,
+        'take_profit_pct': 2.5,
+        'min_risk_reward': 1.5,
+        
+        # Market Requirements
+        'min_adx': 25,
+        'allowed_regimes': ['TRENDING'],
+        'blocked_volatility': ['EXTREME'],
+        
+        # Behavioral
+        'fomo_sensitivity': 1.5,
+        'max_trades_per_day': 10,
+        'losing_streak_block': 2,
+        
+        # Time restrictions
+        'blocked_hours': [0, 1, 2, 3, 4, 5],
+        'weekend_allowed': False
+    },
+    
+    'SHORT_TERM': {
+        'name': 'Short Term',
+        'duration_hours': 48,
+        'duration_display': '1-2 days',
+        'description': 'Capturing intraday swings. Balance between frequency and quality of setups.',
+        'risk_level': 'High',
+        
+        'base_win_threshold': 0.50,
+        'min_expectancy': 3.0,
+        'max_loss_probability': 45.0,
+        
+        'position_size_pct': 0.12,
+        'stop_loss_pct': 2.5,
+        'take_profit_pct': 5.0,
+        'min_risk_reward': 2.0,
+        
+        'min_adx': 20,
+        'allowed_regimes': ['TRENDING', 'TRANSITIONING'],
+        'blocked_volatility': ['EXTREME'],
+        
+        'fomo_sensitivity': 1.3,
+        'max_trades_per_day': 6,
+        'losing_streak_block': 2,
+        
+        'blocked_hours': [],
+        'weekend_allowed': True
+    },
+    
+    'SWING': {
+        'name': 'Swing',
+        'duration_hours': 168,
+        'duration_display': '2-7 days',
+        'description': 'Riding medium-term trends. Most balanced approach for beginners and intermediates.',
+        'risk_level': 'Medium',
+        
+        'base_win_threshold': 0.45,
+        'min_expectancy': 0.0,
+        'max_loss_probability': 50.0,
+        
+        'position_size_pct': 0.15,
+        'stop_loss_pct': 4.0,
+        'take_profit_pct': 10.0,
+        'min_risk_reward': 2.5,
+        
+        'min_adx': 15,
+        'allowed_regimes': ['TRENDING', 'TRANSITIONING', 'RANGING'],
+        'blocked_volatility': [],
+        
+        'fomo_sensitivity': 1.0,
+        'max_trades_per_day': 4,
+        'losing_streak_block': 3,
+        
+        'blocked_hours': [],
+        'weekend_allowed': True
+    },
+    
+    'INVESTMENT': {
+        'name': 'Investment',
+        'duration_hours': 720,
+        'duration_display': 'Weeks to months',
+        'description': 'Long-term position building. Lower win rate acceptable with larger targets.',
+        'risk_level': 'Lower',
+        
+        'base_win_threshold': 0.35,
+        'min_expectancy': -5.0,
+        'max_loss_probability': 55.0,
+        
+        'position_size_pct': 0.25,
+        'stop_loss_pct': 8.0,
+        'take_profit_pct': 25.0,
+        'min_risk_reward': 3.0,
+        
+        'min_adx': 0,
+        'allowed_regimes': ['TRENDING', 'TRANSITIONING', 'RANGING', 'UNKNOWN'],
+        'blocked_volatility': [],
+        
+        'fomo_sensitivity': 0.5,
+        'max_trades_per_day': 2,
+        'losing_streak_block': 4,
+        
+        'blocked_hours': [],
+        'weekend_allowed': True
+    }
+}
+
+EXPERIENCE_MODIFIERS = {
+    'BEGINNER': {
+        'name': 'Beginner',
+        'threshold_boost': 0.10,
+        'position_size_mult': 0.5,
+        'fomo_sensitivity_mult': 1.5,
+        'max_trades_mult': 0.5,
+        'blocked_trade_types': ['SCALP'],
+        'description': 'New to trading. Extra protection enabled.'
+    },
+    'INTERMEDIATE': {
+        'name': 'Intermediate',
+        'threshold_boost': 0.05,
+        'position_size_mult': 0.75,
+        'fomo_sensitivity_mult': 1.2,
+        'max_trades_mult': 0.75,
+        'blocked_trade_types': [],
+        'description': 'Some experience. Moderate protection.'
+    },
+    'ADVANCED': {
+        'name': 'Advanced',
+        'threshold_boost': 0.0,
+        'position_size_mult': 1.0,
+        'fomo_sensitivity_mult': 1.0,
+        'max_trades_mult': 1.0,
+        'blocked_trade_types': [],
+        'description': 'Experienced trader. Full access.'
+    }
+}
+
+# ============================================================
+# PYDANTIC MODELS
 # ============================================================
 
 class TradeType(str, Enum):
@@ -38,15 +208,6 @@ class TradeType(str, Enum):
     SHORT_TERM = "SHORT_TERM"
     SWING = "SWING"
     INVESTMENT = "INVESTMENT"
-
-class HoldingStatus(str, Enum):
-    NO_POSITION = "NO_POSITION"
-    IN_POSITION = "IN_POSITION"
-
-class RiskPreference(str, Enum):
-    LOW = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH = "HIGH"
 
 class ExperienceLevel(str, Enum):
     BEGINNER = "BEGINNER"
@@ -60,786 +221,1083 @@ class TradeReason(str, Enum):
     TIP = "TIP"
     DIP_BUY = "DIP_BUY"
 
-
-# ============================================================
-# REQUEST MODEL
-# ============================================================
-
 class AnalyzeRequest(BaseModel):
     coin: str
     capital: float = 1000
     trade_type: TradeType = TradeType.SWING
-    entry_price: Optional[float] = None
-    holding_status: HoldingStatus = HoldingStatus.NO_POSITION
-    risk_preference: RiskPreference = RiskPreference.MEDIUM
-    experience_level: ExperienceLevel = ExperienceLevel.INTERMEDIATE
-    reason_for_trade: Optional[TradeReason] = None
+    experience: ExperienceLevel = ExperienceLevel.INTERMEDIATE
+    reason: Optional[TradeReason] = None
     recent_losses: int = 0
     trades_today: int = 0
-    max_daily_trades: int = 5
-
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-TRADE_TYPE_CONFIG = {
-    TradeType.SCALP: {
-        "min_win_prob": 0.55, "max_loss_prob": 0.40, "adx_required": 25,
-        "tp_pct": 0.02, "sl_pct": 0.01, "position_mult": 0.8, "max_hold_hours": 4
-    },
-    TradeType.SHORT_TERM: {
-        "min_win_prob": 0.50, "max_loss_prob": 0.42, "adx_required": 22,
-        "tp_pct": 0.04, "sl_pct": 0.02, "position_mult": 0.9, "max_hold_hours": 48
-    },
-    TradeType.SWING: {
-        "min_win_prob": 0.45, "max_loss_prob": 0.45, "adx_required": 18,
-        "tp_pct": 0.08, "sl_pct": 0.04, "position_mult": 1.0, "max_hold_hours": 168
-    },
-    TradeType.INVESTMENT: {
-        "min_win_prob": 0.35, "max_loss_prob": 0.50, "adx_required": 12,
-        "tp_pct": 0.25, "sl_pct": 0.12, "position_mult": 0.6, "max_hold_hours": 720
-    }
-}
-
-COIN_VOLATILITY = {
-    "BTC_USDT": 1.0,
-    "ETH_USDT": 1.2,
-    "SOL_USDT": 1.5,
-    "PEPE_USDT": 2.0
-}
-
-EXPERIENCE_CONFIG = {
-    ExperienceLevel.BEGINNER: {
-        "threshold_boost": 0.10,
-        "position_mult": 0.5,
-        "block_scalps": True
-    },
-    ExperienceLevel.INTERMEDIATE: {
-        "threshold_boost": 0.05,
-        "position_mult": 0.8,
-        "block_scalps": False
-    },
-    ExperienceLevel.ADVANCED: {
-        "threshold_boost": 0.0,
-        "position_mult": 1.0,
-        "block_scalps": False
-    }
-}
-
+    entry_price: Optional[float] = None
 
 # ============================================================
-# LIVE PRICE FETCHER
+# FASTAPI APP
 # ============================================================
 
-class LivePriceFetcher:
-    def __init__(self):
-        self.exchange = ccxt.binance()
-        self.cache = {}
-        self.cache_time = {}
-    
-    def get_price(self, symbol: str) -> Optional[float]:
-        now = datetime.now().timestamp()
-        if symbol in self.cache and now - self.cache_time.get(symbol, 0) < 10:
-            return self.cache[symbol]
-        try:
-            ticker = self.exchange.fetch_ticker(symbol.replace('_', '/'))
-            self.cache[symbol] = ticker['last']
-            self.cache_time[symbol] = now
-            return ticker['last']
-        except:
-            return None
+app = FastAPI(
+    title="Crypto AI Trading API",
+    version="5.0.0",
+    description="Trade-Type-Specific Analysis System"
+)
 
+# CORS - Allow all origins for development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"]
+)
 
-# ============================================================
-# MARKET CONTEXT ENGINE
-# ============================================================
+# Exception handler to ensure CORS headers on errors
+from fastapi.responses import JSONResponse
 
-class MarketContextEngine:
-    def __init__(self):
-        self.exchange = ccxt.binance()
-        self.btc_cache = None
-        self.btc_cache_time = None
-    
-    def get_btc_context(self) -> dict:
-        try:
-            now = datetime.now().timestamp()
-            if self.btc_cache and self.btc_cache_time and now - self.btc_cache_time < 60:
-                return self.btc_cache
-            
-            df_1h = pd.DataFrame(
-                self.exchange.fetch_ohlcv('BTC/USDT', '1h', limit=50),
-                columns=['ts', 'o', 'h', 'l', 'c', 'v']
-            )
-            df_4h = pd.DataFrame(
-                self.exchange.fetch_ohlcv('BTC/USDT', '4h', limit=30),
-                columns=['ts', 'o', 'h', 'l', 'c', 'v']
-            )
-            df_1d = pd.DataFrame(
-                self.exchange.fetch_ohlcv('BTC/USDT', '1d', limit=14),
-                columns=['ts', 'o', 'h', 'l', 'c', 'v']
-            )
-            
-            def get_trend(close):
-                ema9 = pd.Series(close).ewm(span=9).mean().iloc[-1]
-                ema21 = pd.Series(close).ewm(span=21).mean().iloc[-1]
-                ret = (close[-1] - close[-5]) / close[-5] * 100 if len(close) >= 5 else 0
-                if ema9 > ema21 and ret > 0.5:
-                    return 'UP'
-                elif ema9 < ema21 and ret < -0.5:
-                    return 'DOWN'
-                return 'SIDEWAYS'
-            
-            trend_1h = get_trend(df_1h['c'].values)
-            trend_4h = get_trend(df_4h['c'].values)
-            trend_1d = get_trend(df_1d['c'].values)
-            
-            scores = {'UP': 1, 'SIDEWAYS': 0, 'DOWN': -1}
-            weighted = scores[trend_1h]*0.2 + scores[trend_4h]*0.3 + scores[trend_1d]*0.5
-            
-            if weighted > 0.3:
-                overall = 'BULLISH'
-                support_alts = True
-            elif weighted < -0.3:
-                overall = 'BEARISH'
-                support_alts = False
-            else:
-                overall = 'NEUTRAL'
-                support_alts = True
-            
-            price = df_1h['c'].iloc[-1]
-            change_24h = (price - df_1h['c'].iloc[-24]) / df_1h['c'].iloc[-24] * 100 if len(df_1h) >= 24 else 0
-            change_1h = (price - df_1h['c'].iloc[-2]) / df_1h['c'].iloc[-2] * 100 if len(df_1h) >= 2 else 0
-            
-            # Calculate trend strength
-            def get_strength(df):
-                if len(df) < 10:
-                    return 50
-                close = df['c'].values
-                returns = (close[-1] - close[-10]) / close[-10] * 100
-                return min(100, abs(returns) * 10)
-
-            str_1h = get_strength(df_1h)
-            str_4h = get_strength(df_4h)
-            str_1d = get_strength(df_1d)
-
-            self.btc_cache = {
-                'trend_1h': trend_1h,
-                'trend_4h': trend_4h,
-                'trend_1d': trend_1d,
-                'overall_trend': overall,
-                'strength': round((str_1h + str_4h + str_1d) / 3, 1),
-                'support_alts': support_alts,
-                'price': round(price, 2),
-                'change_24h': round(change_24h, 2),
-                'change_1h': round(change_1h, 2)
-            }
-            self.btc_cache_time = now
-            return self.btc_cache
-            
-        except Exception as e:
-            print(f"BTC context error: {e}")
-            return {
-                'trend_1h': 'UNKNOWN', 'trend_4h': 'UNKNOWN', 'trend_1d': 'UNKNOWN',
-                'overall_trend': 'UNKNOWN', 'strength': 50, 'support_alts': True,
-                'price': 0, 'change_24h': 0, 'change_1h': 0
-            }
-    
-    def get_regime(self, df: pd.DataFrame) -> dict:
-        if df is None or len(df) < 30:
-            return {'regime': 'UNKNOWN', 'adx': 0, 'volatility': 'NORMAL', 'reliable': False}
-        
-        try:
-            close = df['close'].values[-30:]
-            high = df['high'].values[-30:]
-            low = df['low'].values[-30:]
-            
-            tr = [max(high[i]-low[i], abs(high[i]-close[i-1]), abs(low[i]-close[i-1])) for i in range(1, len(close))]
-            atr = np.mean(tr)
-            atr_pct = (atr / close[-1]) * 100
-            
-            plus_dm = [max(high[i]-high[i-1], 0) if high[i]-high[i-1] > low[i-1]-low[i] else 0 for i in range(1, len(high))]
-            minus_dm = [max(low[i-1]-low[i], 0) if low[i-1]-low[i] > high[i]-high[i-1] else 0 for i in range(1, len(low))]
-            
-            avg_plus = np.mean(plus_dm[-14:])
-            avg_minus = np.mean(minus_dm[-14:])
-            adx = abs(avg_plus - avg_minus) / (avg_plus + avg_minus + 0.0001) * 100
-            
-            if adx < 5 or np.isnan(adx):
-                return {'regime': 'UNKNOWN', 'adx': 0, 'volatility': 'UNKNOWN', 'reliable': False,
-                        'recommendation': '⚠️ Insufficient trend data'}
-            
-            regime = 'TRENDING' if adx > 25 else ('RANGING' if adx < 15 else 'TRANSITIONING')
-            volatility = 'EXTREME' if atr_pct > 5 else ('HIGH' if atr_pct > 3 else ('NORMAL' if atr_pct > 1.5 else 'LOW'))
-            
-            recommendations = {
-                'TRENDING': '✅ Good for trend-following entries',
-                'RANGING': '⚠️ Avoid breakouts, wait for range edges',
-                'TRANSITIONING': '⏳ Market direction unclear, reduce exposure'
-            }
-            
-            return {
-                'regime': regime,
-                'adx': round(adx, 1),
-                'volatility': volatility,
-                'volatility_pct': round(atr_pct, 2),
-                'recommendation': recommendations.get(regime, ''),
-                'reliable': True
-            }
-        except:
-            return {'regime': 'UNKNOWN', 'adx': 0, 'volatility': 'NORMAL', 'reliable': False}
-
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    print(f"❌ Global error: {exc}")
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*"
+        }
+    )
 
 # ============================================================
-# WEBSOCKET PRICE STREAMER
+# PRICE STREAMER (WebSocket to Binance)
 # ============================================================
 
 class PriceStreamer:
-    """
-    Connects to Binance WebSocket and broadcasts prices to all clients.
-    """
-    
     def __init__(self):
+        self.prices: Dict[str, Dict] = {}
         self.clients: Set[WebSocket] = set()
-        self.prices: dict = {}
-        self.previous_prices: dict = {}
         self.running = False
         
-        self.coins = {
-            'BTC_USDT': 'btcusdt',
-            'ETH_USDT': 'ethusdt',
-            'SOL_USDT': 'solusdt',
-            'PEPE_USDT': 'pepeusdt'
-        }
-    
-    async def connect_client(self, websocket: WebSocket):
-        await websocket.accept()
-        self.clients.add(websocket)
-        if self.prices:
-            await websocket.send_json({
-                'type': 'initial',
-                'prices': self.prices
-            })
-        print(f"  📱 Client connected. Total: {len(self.clients)}")
-    
-    def disconnect_client(self, websocket: WebSocket):
-        self.clients.discard(websocket)
-        print(f"  📱 Client disconnected. Total: {len(self.clients)}")
-    
-    async def broadcast(self, data: dict):
-        dead_clients = set()
-        for client in self.clients:
-            try:
-                await client.send_json(data)
-            except:
-                dead_clients.add(client)
-        self.clients -= dead_clients
-    
-    async def binance_listener(self, symbol: str, coin_key: str):
-        url = f"wss://stream.binance.com:9443/ws/{symbol}@ticker"
+    async def connect_binance(self, symbol: str):
+        """Connect to Binance WebSocket for a single symbol"""
+        import websockets
+        
+        ws_symbol = symbol.replace('_', '').lower()
+        url = f"wss://stream.binance.com:9443/ws/{ws_symbol}@ticker"
         
         while self.running:
             try:
                 async with websockets.connect(url) as ws:
-                    print(f"  🔗 Connected to Binance: {coin_key}")
-                    
-                    while self.running:
-                        try:
-                            msg = await asyncio.wait_for(ws.recv(), timeout=30)
-                            data = json.loads(msg)
-                            
-                            price = float(data['c'])
-                            change_24h = float(data['P'])
-                            
-                            self.previous_prices[coin_key] = self.prices.get(coin_key, {}).get('price', price)
-                            
-                            self.prices[coin_key] = {
-                                'price': price,
-                                'change_24h': round(change_24h, 2),
-                                'timestamp': datetime.now().isoformat(),
-                                'direction': 'up' if price > self.previous_prices[coin_key] else ('down' if price < self.previous_prices[coin_key] else 'same')
-                            }
-                            
-                            await self.broadcast({
-                                'type': 'price_update',
-                                'coin': coin_key,
-                                'data': self.prices[coin_key]
-                            })
-                            
-                        except asyncio.TimeoutError:
-                            await ws.ping()
-                            
+                    print(f"✅ Connected to Binance: {symbol}")
+                    async for msg in ws:
+                        if not self.running:
+                            break
+                        data = json.loads(msg)
+                        
+                        price_data = {
+                            'price': float(data['c']),
+                            'change_24h': float(data['P']),
+                            'high_24h': float(data['h']),
+                            'low_24h': float(data['l']),
+                            'volume_24h': float(data['v']),
+                            'direction': 'up' if float(data['p']) > 0 else 'down' if float(data['p']) < 0 else 'same',
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        
+                        old_price = self.prices.get(symbol, {}).get('price', 0)
+                        new_price = price_data['price']
+                        if old_price > 0:
+                            price_data['direction'] = 'up' if new_price > old_price else 'down' if new_price < old_price else 'same'
+                        
+                        self.prices[symbol] = price_data
+                        await self.broadcast(symbol, price_data)
+                        
             except Exception as e:
-                print(f"  ❌ Binance connection error ({coin_key}): {e}")
+                print(f"❌ Binance connection error ({symbol}): {e}")
                 await asyncio.sleep(5)
     
-    async def start(self):
+    async def broadcast(self, symbol: str, data: Dict):
+        """Broadcast price update to all connected clients"""
+        if not self.clients:
+            return
+            
+        message = json.dumps({
+            'type': 'price_update',
+            'coin': symbol,
+            'data': data
+        })
+        
+        disconnected = set()
+        for client in self.clients:
+            try:
+                await client.send_text(message)
+            except:
+                disconnected.add(client)
+        
+        self.clients -= disconnected
+    
+    async def start(self, symbols: List[str]):
+        """Start streaming for all symbols"""
         self.running = True
-        tasks = [
-            self.binance_listener(symbol, coin_key)
-            for coin_key, symbol in self.coins.items()
-        ]
+        tasks = [self.connect_binance(s) for s in symbols]
         await asyncio.gather(*tasks)
     
     def stop(self):
+        """Stop all streams"""
         self.running = False
 
-
-# Create global price streamer
+# Global price streamer
 price_streamer = PriceStreamer()
 
-
 # ============================================================
-# TRADING ENGINE (Orchestrates All Components)
+# TRADING ENGINE
 # ============================================================
 
 class TradingEngine:
     def __init__(self):
-        self.models = {}
-        self.feature_cols = {}
-        self.data_cache = {}
-        
-        self.price_fetcher = LivePriceFetcher()
-        self.market_context = MarketContextEngine()
-        self.scenario_engine = ScenarioEngine()
-        
         self.coins = ['BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'PEPE_USDT']
-        self.load_all()
+        self.models = {}
+        self.data_cache = {}
+        self.load_models()
     
-    def load_all(self):
+    def load_models(self):
+        """Load ML models for each coin"""
+        model_dir = 'models'
         for coin in self.coins:
-            model_path = f"models/{coin}/decision_model.pkl"
-            features_path = f"models/{coin}/decision_features.txt"
+            # Try the correct path structure: models/{coin}/decision_model.pkl
+            model_path = os.path.join(model_dir, coin, 'decision_model.pkl')
             if os.path.exists(model_path):
-                self.models[coin] = joblib.load(model_path)
-                with open(features_path, 'r') as f:
-                    self.feature_cols[coin] = [l.strip() for l in f.readlines()]
-                print(f"  ✅ {coin} model loaded")
-            
-            data_path = f"data/{coin}_multi_tf_features.csv"
-            if os.path.exists(data_path):
+                try:
+                    self.models[coin] = joblib.load(model_path)
+                    # Also load the feature list
+                    feature_list_path = os.path.join(model_dir, coin, 'feature_list.txt')
+                    if os.path.exists(feature_list_path):
+                        with open(feature_list_path, 'r') as f:
+                            self.feature_lists = getattr(self, 'feature_lists', {})
+                            self.feature_lists[coin] = [line.strip() for line in f if line.strip()]
+                    print(f"✅ Loaded model: {coin}")
+                except Exception as e:
+                    print(f"❌ Error loading {coin} model: {e}")
+            else:
+                # Fallback to old path structure
+                old_model_path = os.path.join(model_dir, f'{coin}_model.pkl')
+                if os.path.exists(old_model_path):
+                    try:
+                        self.models[coin] = joblib.load(old_model_path)
+                        print(f"✅ Loaded model (legacy): {coin}")
+                    except Exception as e:
+                        print(f"❌ Error loading {coin} model: {e}")
+    
+    def get_live_price(self, coin: str) -> tuple:
+        """Get live price from streamer or fallback to API"""
+        if coin in price_streamer.prices:
+            data = price_streamer.prices[coin]
+            return data['price'], 'WEBSOCKET'
+        
+        # Fallback to REST API
+        try:
+            import ccxt
+            exchange = ccxt.binance()
+            symbol = coin.replace('_', '/')
+            ticker = exchange.fetch_ticker(symbol)
+            return ticker['last'], 'REST_API'
+        except:
+            return 0, 'UNAVAILABLE'
+    
+    def load_data(self, coin: str, multi_tf: bool = False) -> Optional[pd.DataFrame]:
+        """Load historical data for a coin
+
+        Args:
+            coin: Coin symbol (e.g., 'BTC_USDT')
+            multi_tf: If True, load multi-timeframe features file for model prediction
+        """
+        if multi_tf:
+            data_path = f'data/{coin}_multi_tf_features.csv'
+        else:
+            data_path = f'data/{coin}_1h.csv'
+
+        if os.path.exists(data_path):
+            try:
                 df = pd.read_csv(data_path)
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-                self.data_cache[coin] = df
+                if 'timestamp' in df.columns:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                return df
+            except Exception as e:
+                print(f"Error loading data {data_path}: {e}")
+                pass
+        return None
     
-    def get_probabilities(self, coin, features):
+    def get_btc_context(self) -> Dict:
+        """Get BTC market context"""
+        btc_data = self.load_data('BTC_USDT')
+        price, source = self.get_live_price('BTC_USDT')
+        
+        context = {
+            'price': price,
+            'price_source': source,
+            'change_24h': price_streamer.prices.get('BTC_USDT', {}).get('change_24h', 0),
+            'trend_1h': 'SIDEWAYS',
+            'trend_4h': 'SIDEWAYS',
+            'trend_1d': 'SIDEWAYS',
+            'overall_trend': 'NEUTRAL',
+            'support_alts': True
+        }
+        
+        if btc_data is not None and len(btc_data) >= 24:
+            close = btc_data['close'].values
+            
+            # 1H trend
+            if len(close) >= 2:
+                change_1h = (close[-1] - close[-2]) / close[-2] * 100
+                context['trend_1h'] = 'UP' if change_1h > 0.5 else 'DOWN' if change_1h < -0.5 else 'SIDEWAYS'
+            
+            # 4H trend
+            if len(close) >= 5:
+                change_4h = (close[-1] - close[-5]) / close[-5] * 100
+                context['trend_4h'] = 'UP' if change_4h > 1 else 'DOWN' if change_4h < -1 else 'SIDEWAYS'
+            
+            # 1D trend
+            if len(close) >= 24:
+                change_1d = (close[-1] - close[-24]) / close[-24] * 100
+                context['trend_1d'] = 'UP' if change_1d > 2 else 'DOWN' if change_1d < -2 else 'SIDEWAYS'
+            
+            # Overall
+            trends = [context['trend_1h'], context['trend_4h'], context['trend_1d']]
+            up_count = trends.count('UP')
+            down_count = trends.count('DOWN')
+            
+            if up_count >= 2:
+                context['overall_trend'] = 'BULLISH'
+            elif down_count >= 2:
+                context['overall_trend'] = 'BEARISH'
+            else:
+                context['overall_trend'] = 'NEUTRAL'
+            
+            context['support_alts'] = context['overall_trend'] != 'BEARISH'
+        
+        return context
+    
+    def get_market_regime(self, coin: str) -> Dict:
+        """Detect market regime using ADX"""
+        result = {
+            'regime': 'UNKNOWN',
+            'adx': 0,
+            'volatility': 'UNKNOWN',
+            'volatility_pct': 0,
+            'recommendation': ''
+        }
+
+        # First try to get pre-computed ADX from multi-tf features
+        df_features = self.load_data(coin, multi_tf=True)
+        if df_features is not None and len(df_features) > 0 and '1h_adx' in df_features.columns:
+            try:
+                adx = df_features['1h_adx'].iloc[-1]
+                if pd.notna(adx):
+                    result['adx'] = round(float(adx), 1)
+
+                    # Get volatility from ATR percentage if available
+                    if '1h_atr_pct' in df_features.columns:
+                        atr_pct = df_features['1h_atr_pct'].iloc[-1]
+                        if pd.notna(atr_pct):
+                            result['volatility_pct'] = round(float(atr_pct), 2)
+            except Exception as e:
+                print(f"Error reading pre-computed ADX: {e}")
+
+        # Fallback to manual calculation if needed
+        if result['adx'] == 0:
+            df = self.load_data(coin)
+            if df is None or len(df) < 20:
+                result['recommendation'] = 'Insufficient data for regime detection'
+                return result
+
+            try:
+                high = df['high'].values
+                low = df['low'].values
+                close = df['close'].values
+
+                # Calculate ADX
+                tr = np.maximum(high[1:] - low[1:],
+                              np.abs(high[1:] - close[:-1]),
+                              np.abs(low[1:] - close[:-1]))
+                atr = pd.Series(tr).rolling(14).mean().iloc[-1]
+
+                # Simplified ADX calculation
+                plus_dm = np.where((high[1:] - high[:-1]) > (low[:-1] - low[1:]),
+                                  np.maximum(high[1:] - high[:-1], 0), 0)
+                minus_dm = np.where((low[:-1] - low[1:]) > (high[1:] - high[:-1]),
+                                   np.maximum(low[:-1] - low[1:], 0), 0)
+
+                plus_di = 100 * pd.Series(plus_dm).rolling(14).mean().iloc[-1] / atr if atr > 0 else 0
+                minus_di = 100 * pd.Series(minus_dm).rolling(14).mean().iloc[-1] / atr if atr > 0 else 0
+
+                dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di) if (plus_di + minus_di) > 0 else 0
+                adx = pd.Series([dx] * 14).rolling(14).mean().iloc[-1] if not np.isnan(dx) else 0
+
+                result['adx'] = round(adx, 1)
+            except Exception as e:
+                print(f"ADX calculation error: {e}")
+                result['adx'] = 0
+
+        # Now determine regime based on ADX
+        adx = result['adx']
+
+        # Determine regime
+        if adx >= 40:
+            result['regime'] = 'TRENDING'
+            result['recommendation'] = 'Strong trend - good for trend-following strategies'
+        elif adx >= 25:
+            result['regime'] = 'TRENDING'
+            result['recommendation'] = 'Moderate trend - proceed with directional bias'
+        elif adx >= 20:
+            result['regime'] = 'TRANSITIONING'
+            result['recommendation'] = 'Trend developing - wait for confirmation'
+        else:
+            result['regime'] = 'RANGING'
+            result['recommendation'] = 'No clear trend - consider range strategies or wait'
+
+        # Calculate volatility if not already set from pre-computed data
+        if result['volatility_pct'] == 0:
+            try:
+                df = self.load_data(coin)
+                if df is not None and len(df) >= 24 and 'close' in df.columns:
+                    close = df['close'].values
+                    returns = pd.Series(close).pct_change().dropna()
+                    vol = returns.std() * np.sqrt(24) * 100  # Annualized hourly vol
+                    result['volatility_pct'] = round(vol, 2)
+            except Exception as e:
+                print(f"Volatility calculation error: {e}")
+
+        # Determine volatility level
+        vol = result['volatility_pct']
+        if vol > 100:
+            result['volatility'] = 'EXTREME'
+        elif vol > 60:
+            result['volatility'] = 'HIGH'
+        elif vol > 30:
+            result['volatility'] = 'MODERATE'
+        elif vol > 0:
+            result['volatility'] = 'LOW'
+        else:
+            result['volatility'] = 'UNKNOWN'
+
+        return result
+    
+    def get_model_probabilities(self, coin: str) -> Dict:
+        """Get WIN/LOSS/SIDEWAYS probabilities from model"""
         if coin not in self.models:
-            return None, None
-        model = self.models[coin]
-        X = features[self.feature_cols[coin]].fillna(0)
-        probas = model.predict_proba(X)[0]
-        classes = list(model.classes_)
-        win_idx = classes.index('WIN')
-        loss_idx = classes.index('LOSS')
-        return probas[win_idx], probas[loss_idx]
+            return {'win': 0, 'loss': 0, 'sideways': 0, 'error': 'Model not loaded'}
+
+        # Load multi-timeframe features
+        df = self.load_data(coin, multi_tf=True)
+        if df is None or len(df) < 50:
+            return {'win': 0, 'loss': 0, 'sideways': 0, 'error': 'Insufficient data'}
+
+        try:
+            model = self.models[coin]
+
+            # Get the feature list for this coin
+            feature_lists = getattr(self, 'feature_lists', {})
+            feature_list = feature_lists.get(coin, [])
+
+            if not feature_list:
+                # Fallback: try to infer features from dataframe columns
+                # Exclude non-feature columns
+                exclude_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume',
+                               'target_return', 'target_direction']
+                feature_list = [col for col in df.columns if col not in exclude_cols]
+
+            if not feature_list:
+                return {'win': 0, 'loss': 0, 'sideways': 0, 'error': 'No features available'}
+
+            # Get the latest row of features
+            latest_row = df.iloc[-1]
+
+            # Extract features in the correct order
+            features = []
+            for feat in feature_list:
+                if feat in latest_row:
+                    val = latest_row[feat]
+                    # Handle NaN values
+                    if pd.isna(val):
+                        val = 0.0
+                    features.append(float(val))
+                else:
+                    features.append(0.0)
+
+            # Predict - use DataFrame with feature names to avoid sklearn warning
+            X = pd.DataFrame([features], columns=feature_list)
+
+            if hasattr(model, 'predict_proba'):
+                probs = model.predict_proba(X)[0]
+                classes = model.classes_ if hasattr(model, 'classes_') else None
+
+                # Map probabilities based on class labels
+                if classes is not None:
+                    class_list = list(classes)
+                    win_prob = 0.0
+                    loss_prob = 0.0
+                    sideways_prob = 0.0
+
+                    for i, cls in enumerate(class_list):
+                        cls_str = str(cls).upper()
+                        if cls_str in ['UP', '1', 'WIN', 'BULLISH']:
+                            win_prob = probs[i] * 100
+                        elif cls_str in ['DOWN', '-1', '0', 'LOSS', 'BEARISH']:
+                            loss_prob = probs[i] * 100
+                        elif cls_str in ['SIDEWAYS', 'NEUTRAL']:
+                            sideways_prob = probs[i] * 100
+
+                    # If we couldn't map classes, use position-based assignment
+                    if win_prob == 0 and loss_prob == 0:
+                        if len(probs) >= 3:
+                            loss_prob = probs[0] * 100
+                            sideways_prob = probs[1] * 100
+                            win_prob = probs[2] * 100
+                        elif len(probs) == 2:
+                            loss_prob = probs[0] * 100
+                            win_prob = probs[1] * 100
+                else:
+                    # Fallback for models without classes_ attribute
+                    if len(probs) >= 3:
+                        loss_prob = probs[0] * 100
+                        sideways_prob = probs[1] * 100
+                        win_prob = probs[2] * 100
+                    elif len(probs) == 2:
+                        loss_prob = probs[0] * 100
+                        win_prob = probs[1] * 100
+                    else:
+                        win_prob = probs[0] * 100
+                        loss_prob = 100 - win_prob
+                        sideways_prob = 0.0
+
+                return {
+                    'win': round(win_prob, 1),
+                    'loss': round(loss_prob, 1),
+                    'sideways': round(sideways_prob, 1),
+                    'error': None
+                }
+            else:
+                # Binary model without predict_proba
+                pred = model.predict(X)[0]
+                pred_str = str(pred).upper()
+                if pred_str in ['UP', '1', 'WIN', 'BULLISH']:
+                    return {'win': 60, 'loss': 40, 'sideways': 0, 'error': None}
+                else:
+                    return {'win': 40, 'loss': 60, 'sideways': 0, 'error': None}
+
+        except Exception as e:
+            import traceback
+            error_msg = f"Model prediction error for {coin}: {e}"
+            print(f"❌ {error_msg}")
+            traceback.print_exc()
+            # Return fallback values instead of crashing
+            return {'win': 45, 'loss': 45, 'sideways': 10, 'error': error_msg}
     
-    def analyze(self, request: AnalyzeRequest) -> dict:
-        """
-        Main analysis function with FIXED metrics:
-        - Expectancy: WIN% - LOSS% (is trade profitable?)
-        - Readiness: WIN% - Threshold% (how close to entry?)
-        """
+    def apply_trade_type_analysis(
+        self,
+        trade_type: str,
+        experience: str,
+        win_prob: float,
+        loss_prob: float,
+        adx: float,
+        regime: str,
+        volatility: str,
+        user_context: Dict
+    ) -> Dict:
+        """Apply trade-type-specific analysis rules"""
         
-        coin = request.coin
-        if coin not in self.coins:
-            raise ValueError(f"Invalid coin: {coin}")
+        config = TRADE_TYPE_CONFIG.get(trade_type, TRADE_TYPE_CONFIG['SWING'])
+        exp_mod = EXPERIENCE_MODIFIERS.get(experience, EXPERIENCE_MODIFIERS['INTERMEDIATE'])
         
-        # Get data
-        features = self.data_cache[coin].tail(1)
-        coin_data = self.data_cache[coin].tail(100)
+        result = {
+            'adjusted_threshold': config['base_win_threshold'],
+            'position_size_pct': config['position_size_pct'],
+            'stop_loss_pct': config['stop_loss_pct'],
+            'take_profit_pct': config['take_profit_pct'],
+            'max_hold_hours': config['duration_hours'],
+            'warnings': [],
+            'blocks': [],
+            'reasoning': [],
+            'trade_type_requirements': []
+        }
         
-        # Get prices
-        ws_price = price_streamer.prices.get(coin, {}).get('price')
-        live_price = ws_price if ws_price else self.price_fetcher.get_price(coin)
-        current_price = live_price if live_price else features['close'].values[0]
-        entry_price = request.entry_price if request.entry_price else current_price
+        # =====================================
+        # 1. EXPERIENCE MODIFIERS
+        # =====================================
         
-        # Get market context
-        btc_context = self.market_context.get_btc_context()
-        regime = self.market_context.get_regime(coin_data)
+        if trade_type in exp_mod['blocked_trade_types']:
+            result['blocks'].append({
+                'type': 'EXPERIENCE_BLOCK',
+                'message': f'{config["name"]} trading not recommended for {exp_mod["name"]} traders',
+                'severity': 'HIGH'
+            })
+            result['reasoning'].append(f'{config["name"]} requires more trading experience')
         
-        # ============================================
-        # STEP 1: SCENARIO ENGINE (Gate Layer)
-        # ============================================
-        scenario_result = self.scenario_engine.evaluate(
-            btc_data=btc_context,
-            coin=coin,
-            coin_data=coin_data,
+        result['adjusted_threshold'] += exp_mod['threshold_boost']
+        
+        if exp_mod['threshold_boost'] > 0:
+            result['reasoning'].append(
+                f'WIN threshold: {config["base_win_threshold"]*100:.0f}% base + '
+                f'{exp_mod["threshold_boost"]*100:.0f}% ({exp_mod["name"]}) = '
+                f'{result["adjusted_threshold"]*100:.0f}%'
+            )
+        else:
+            result['reasoning'].append(
+                f'WIN threshold: {result["adjusted_threshold"]*100:.0f}% for {config["name"]} trading'
+            )
+        
+        result['position_size_pct'] *= exp_mod['position_size_mult']
+        
+        # =====================================
+        # 2. MARKET REGIME CHECK
+        # =====================================
+        
+        if regime not in config['allowed_regimes'] and regime != 'UNKNOWN':
+            result['warnings'].append({
+                'type': 'REGIME_MISMATCH',
+                'message': f'{regime} market not ideal for {config["name"]} trading',
+                'severity': 'MEDIUM'
+            })
+            result['adjusted_threshold'] += 0.05
+            result['reasoning'].append(f'+5% threshold: {regime} regime not optimal for {config["name"]}')
+        
+        result['trade_type_requirements'].append({
+            'name': 'Market Regime',
+            'required': ', '.join(config['allowed_regimes']),
+            'current': regime,
+            'met': bool(regime in config['allowed_regimes'] or regime == 'UNKNOWN')
+        })
+        
+        # =====================================
+        # 3. ADX CHECK
+        # =====================================
+        
+        if config['min_adx'] > 0:
+            if adx < config['min_adx']:
+                if trade_type == 'SCALP':
+                    result['blocks'].append({
+                        'type': 'ADX_BLOCK',
+                        'message': f'Scalping requires ADX > {config["min_adx"]} (current: {adx:.0f})',
+                        'severity': 'HIGH'
+                    })
+                else:
+                    result['warnings'].append({
+                        'type': 'WEAK_TREND',
+                        'message': f'ADX {adx:.0f} below {config["min_adx"]} recommended for {config["name"]}',
+                        'severity': 'LOW'
+                    })
+                result['reasoning'].append(f'Weak trend: ADX {adx:.0f} < {config["min_adx"]} required')
+            
+            result['trade_type_requirements'].append({
+                'name': 'Trend Strength (ADX)',
+                'required': f'> {config["min_adx"]}',
+                'current': f'{float(adx):.0f}',
+                'met': bool(adx >= config['min_adx'])
+            })
+        
+        # =====================================
+        # 4. VOLATILITY CHECK
+        # =====================================
+        
+        if volatility in config['blocked_volatility']:
+            result['blocks'].append({
+                'type': 'VOLATILITY_BLOCK',
+                'message': f'{volatility} volatility too dangerous for {config["name"]} trading',
+                'severity': 'HIGH'
+            })
+        
+        # =====================================
+        # 5. TIME RESTRICTIONS
+        # =====================================
+        
+        current_hour = datetime.now().hour
+        is_weekend = datetime.now().weekday() >= 5
+        
+        if current_hour in config['blocked_hours']:
+            result['warnings'].append({
+                'type': 'TIME_WARNING',
+                'message': f'{config["name"]} not recommended during off-hours (current: {current_hour}:00)',
+                'severity': 'MEDIUM'
+            })
+            result['adjusted_threshold'] += 0.05
+        
+        if is_weekend and not config['weekend_allowed']:
+            result['blocks'].append({
+                'type': 'WEEKEND_BLOCK',
+                'message': f'{config["name"]} trading blocked on weekends',
+                'severity': 'HIGH'
+            })
+        
+        # =====================================
+        # 6. PROBABILITY REQUIREMENTS
+        # =====================================
+        
+        if loss_prob > config['max_loss_probability']:
+            result['warnings'].append({
+                'type': 'HIGH_LOSS_PROB',
+                'message': f'LOSS {loss_prob:.1f}% exceeds {config["name"]} max of {config["max_loss_probability"]}%',
+                'severity': 'HIGH'
+            })
+            result['reasoning'].append(
+                f'High loss risk: {loss_prob:.1f}% > {config["max_loss_probability"]}% limit'
+            )
+        
+        result['trade_type_requirements'].append({
+            'name': 'Max Loss Probability',
+            'required': f'< {config["max_loss_probability"]}%',
+            'current': f'{loss_prob:.1f}%',
+            'met': bool(loss_prob <= config['max_loss_probability'])
+        })
+        
+        expectancy = win_prob - loss_prob
+        if expectancy < config['min_expectancy']:
+            result['warnings'].append({
+                'type': 'LOW_EXPECTANCY',
+                'message': f'Expectancy {expectancy:.1f}% below {config["name"]} minimum of {config["min_expectancy"]}%',
+                'severity': 'MEDIUM' if expectancy > -5 else 'HIGH'
+            })
+            result['reasoning'].append(
+                f'Low expectancy: {expectancy:.1f}% < {config["min_expectancy"]}% required'
+            )
+        
+        result['trade_type_requirements'].append({
+            'name': 'Minimum Expectancy',
+            'required': f'> {config["min_expectancy"]}%',
+            'current': f'{expectancy:.1f}%',
+            'met': bool(expectancy >= config['min_expectancy'])
+        })
+        
+        # =====================================
+        # 7. BEHAVIORAL LIMITS
+        # =====================================
+        
+        trades_today = user_context.get('trades_today', 0)
+        max_trades = int(config['max_trades_per_day'] * exp_mod['max_trades_mult'])
+        
+        if trades_today >= max_trades:
+            result['blocks'].append({
+                'type': 'TRADE_LIMIT',
+                'message': f'Daily limit reached: {trades_today}/{max_trades} trades',
+                'severity': 'CRITICAL'
+            })
+        elif trades_today >= max_trades - 1:
+            result['warnings'].append({
+                'type': 'NEAR_LIMIT',
+                'message': f'Approaching daily limit: {trades_today}/{max_trades} trades',
+                'severity': 'MEDIUM'
+            })
+        
+        recent_losses = user_context.get('recent_losses', 0)
+        if recent_losses >= config['losing_streak_block']:
+            result['blocks'].append({
+                'type': 'LOSING_STREAK',
+                'message': f'{recent_losses} consecutive losses - take a break',
+                'severity': 'CRITICAL'
+            })
+        
+        # =====================================
+        # 8. FOMO CHECK
+        # =====================================
+        
+        reason = user_context.get('reason', '')
+        if reason == 'FOMO':
+            fomo_boost = 0.10 * config['fomo_sensitivity'] * exp_mod['fomo_sensitivity_mult']
+            result['adjusted_threshold'] += fomo_boost
+            result['warnings'].append({
+                'type': 'FOMO_DETECTED',
+                'message': f'FOMO detected - threshold raised by {fomo_boost*100:.0f}%',
+                'severity': 'HIGH'
+            })
+            result['reasoning'].append(
+                f'+{fomo_boost*100:.0f}% threshold: FOMO protection for {config["name"]}'
+            )
+        
+        if reason == 'TIP':
+            result['warnings'].append({
+                'type': 'TIP_WARNING',
+                'message': 'Trade based on tip - verify with your own analysis',
+                'severity': 'MEDIUM'
+            })
+            result['adjusted_threshold'] += 0.05
+        
+        if reason == 'DIP_BUY':
+            result['warnings'].append({
+                'type': 'DIP_BUY_WARNING',
+                'message': 'Catching falling knives is risky - ensure support confirmed',
+                'severity': 'LOW'
+            })
+        
+        # =====================================
+        # 9. RISK/REWARD
+        # =====================================
+        
+        risk_reward = result['take_profit_pct'] / result['stop_loss_pct'] if result['stop_loss_pct'] > 0 else 0
+        result['risk_reward_ratio'] = round(risk_reward, 2)
+        
+        result['trade_type_requirements'].append({
+            'name': 'Risk/Reward Ratio',
+            'required': f'> {config["min_risk_reward"]}:1',
+            'current': f'{risk_reward:.1f}:1',
+            'met': bool(risk_reward >= config['min_risk_reward'])
+        })
+        
+        # =====================================
+        # 10. THRESHOLD CAP
+        # =====================================
+        
+        result['adjusted_threshold'] = min(result['adjusted_threshold'], 0.75)
+        
+        # Add trade type info
+        result['trade_type_info'] = {
+            'name': config['name'],
+            'duration_hours': config['duration_hours'],
+            'duration_display': config['duration_display'],
+            'description': config['description'],
+            'risk_level': config['risk_level'],
+            'base_threshold': config['base_win_threshold'],
+            'min_adx': config['min_adx'],
+            'min_expectancy': config['min_expectancy'],
+            'max_loss_prob': config['max_loss_probability']
+        }
+        
+        result['experience_info'] = {
+            'name': exp_mod['name'],
+            'description': exp_mod['description'],
+            'threshold_boost': exp_mod['threshold_boost'],
+            'position_mult': exp_mod['position_size_mult']
+        }
+        
+        return result
+    
+    def analyze(self, request: AnalyzeRequest) -> Dict:
+        """Main analysis function with trade-type-specific logic"""
+        
+        coin = request.coin.upper()
+        if '_' not in coin:
+            coin = f"{coin}_USDT"
+        
+        # Get live price
+        price, price_source = self.get_live_price(coin)
+        
+        # Get BTC context
+        btc = self.get_btc_context()
+        
+        # Get market regime
+        regime = self.get_market_regime(coin)
+        
+        # Get model probabilities
+        probs = self.get_model_probabilities(coin)
+        
+        win_prob = probs.get('win', 0)
+        loss_prob = probs.get('loss', 0)
+        sideways_prob = probs.get('sideways', 0)
+        
+        # Apply trade-type-specific analysis
+        trade_analysis = self.apply_trade_type_analysis(
+            trade_type=request.trade_type.value,
+            experience=request.experience.value,
+            win_prob=win_prob,
+            loss_prob=loss_prob,
+            adx=regime.get('adx', 0),
+            regime=regime.get('regime', 'UNKNOWN'),
+            volatility=regime.get('volatility', 'UNKNOWN'),
             user_context={
-                'reason_for_trade': request.reason_for_trade.value if request.reason_for_trade else None,
-                'recent_losses': request.recent_losses,
                 'trades_today': request.trades_today,
-                'max_daily_trades': request.max_daily_trades
+                'recent_losses': request.recent_losses,
+                'reason': request.reason.value if request.reason else ''
             }
         )
         
-        # If BLOCKED → Stop here
-        if scenario_result.decision == ScenarioDecision.BLOCK:
-            return {
-                'coin': coin,
-                'timestamp': datetime.now().isoformat(),
-                'price': current_price,
-                'price_source': 'WEBSOCKET' if ws_price else ('LIVE' if live_price else 'CACHED'),
-                
-                'capital': request.capital,
-                'trade_type': request.trade_type.value,
-                'experience_level': request.experience_level.value,
-                
-                'verdict': 'BLOCKED',
-                'confidence': 'HIGH',
-                'blocked_by': 'SCENARIO_ENGINE',
-                'block_reason': scenario_result.block_reason,
-                
-                'active_scenarios': [s.dict() for s in scenario_result.active_scenarios],
-                'scenario_count': len(scenario_result.active_scenarios),
-                
-                'model_ran': False,
-                'win_probability': None,
-                'loss_probability': None,
-                
-                # Metrics are None when blocked
-                'expectancy': None,
-                'expectancy_status': None,
-                'readiness': None,
-                'readiness_status': None,
-                
-                'risk': {'action': 'NO_TRADE', 'position_size_usd': 0},
-                
-                'suggested_action': {
-                    'action': 'STOP',
-                    'message': scenario_result.block_reason,
-                    'next_check': scenario_result.resume_check,
-                    'conditions': ['Resolve active scenario(s) first']
-                },
-                
-                'market_context': {
-                    'btc': btc_context,
-                    'regime': regime
-                }
-            }
+        adjusted_threshold = trade_analysis['adjusted_threshold']
+        reasoning = trade_analysis['reasoning'].copy()
+        warnings = []
         
-        # ============================================
-        # STEP 2: DECISION ENGINE (Model Logic)
-        # ============================================
+        # Convert warnings to list format
+        for w in trade_analysis['warnings']:
+            warnings.append(w['message'])
         
-        win_prob, loss_prob = self.get_probabilities(coin, features)
-        if win_prob is None:
-            raise ValueError(f"Model not loaded for {coin}")
+        # =====================================
+        # DETERMINE VERDICT
+        # =====================================
         
-        # Get configs
-        trade_config = TRADE_TYPE_CONFIG[request.trade_type]
-        exp_config = EXPERIENCE_CONFIG[request.experience_level]
+        verdict = 'WAIT'
+        confidence = 'LOW'
+        block_reason = None
         
-        # Apply scenario modifications
-        scenario_position_mult = scenario_result.position_size_multiplier
-        scenario_threshold_boost = scenario_result.threshold_boost
+        # Check for blocks first
+        if trade_analysis['blocks']:
+            verdict = 'BLOCKED'
+            confidence = 'N/A'
+            block_reason = trade_analysis['blocks'][0]['message']
+            reasoning.insert(0, f"BLOCKED: {block_reason}")
+        else:
+            # Calculate metrics
+            expectancy = win_prob - loss_prob
+            readiness = win_prob - (adjusted_threshold * 100)
+            
+            # Determine verdict based on metrics
+            if win_prob >= adjusted_threshold * 100 and expectancy >= 0:
+                verdict = 'BUY'
+                confidence = 'HIGH' if expectancy > 10 else 'MEDIUM' if expectancy > 5 else 'LOW'
+                reasoning.append(f'WIN {win_prob:.1f}% meets threshold {adjusted_threshold*100:.0f}%')
+                reasoning.append(f'Positive expectancy: +{expectancy:.1f}%')
+                
+            elif win_prob >= adjusted_threshold * 100 and expectancy < 0:
+                verdict = 'WAIT'
+                confidence = 'LOW'
+                reasoning.append(f'Threshold met but expectancy negative ({expectancy:.1f}%)')
+                reasoning.append('Wait for LOSS probability to decrease')
+                
+            elif loss_prob > 50:
+                verdict = 'AVOID'
+                confidence = 'HIGH'
+                reasoning.append(f'LOSS {loss_prob:.1f}% > 50% - unfavorable odds')
+                
+            else:
+                verdict = 'WAIT'
+                confidence = 'MEDIUM' if readiness > -5 else 'LOW'
+                reasoning.append(f'WIN {win_prob:.1f}% below threshold {adjusted_threshold*100:.0f}%')
+                if readiness > -10:
+                    reasoning.append(f'Close to entry - monitor for improvement')
         
-        # Calculate thresholds
-        base_threshold = trade_config['min_win_prob']
-        adjusted_threshold = base_threshold + exp_config['threshold_boost'] + scenario_threshold_boost
+        # =====================================
+        # CALCULATE METRICS
+        # =====================================
         
-        # ============================================
-        # NEW: Calculate EXPECTANCY and READINESS
-        # ============================================
+        expectancy = win_prob - loss_prob
+        readiness = win_prob - (adjusted_threshold * 100)
         
-        # EXPECTANCY: WIN% - LOSS% (is this trade profitable?)
-        # Answers: "Am I more likely to win or lose?"
-        expectancy = (win_prob - loss_prob) * 100
-        
-        if expectancy > 5:
-            expectancy_status = '✅ Positive (WIN > LOSS)'
+        # Expectancy status
+        if expectancy > 10:
+            expectancy_status = '✅ Strong positive'
+        elif expectancy > 5:
+            expectancy_status = '✅ Positive'
         elif expectancy > 0:
             expectancy_status = '⚠️ Slightly positive'
         elif expectancy > -5:
             expectancy_status = '⚠️ Slightly negative'
         else:
-            expectancy_status = '❌ Negative (LOSS > WIN)'
+            expectancy_status = '❌ Negative'
         
-        # READINESS: WIN% - Threshold% (how close to entry?)
-        # Answers: "How close am I to meeting entry requirements?"
-        readiness = (win_prob - adjusted_threshold) * 100
-        
+        # Readiness status
         if readiness > 10:
             readiness_status = '✅ Well above threshold'
-        elif readiness > 0:
-            readiness_status = '✅ Above threshold (ready)'
+        elif readiness >= 0:
+            readiness_status = '✅ Ready for entry'
         elif readiness > -5:
-            readiness_status = '⚠️ Near threshold (almost ready)'
+            readiness_status = '⚠️ Near threshold'
         else:
-            readiness_status = '❌ Below threshold (not ready)'
+            readiness_status = '❌ Below threshold'
         
-        # Risk-adjusted EV (for advanced users / position sizing)
-        vol_mult = COIN_VOLATILITY.get(coin, 1.0)
-        tp_pct = trade_config['tp_pct'] * vol_mult
-        sl_pct = trade_config['sl_pct'] * vol_mult
-        risk_adjusted_ev = (win_prob * tp_pct * 100) - (loss_prob * sl_pct * 100)
+        # =====================================
+        # POSITION SIZING
+        # =====================================
         
-        # ============================================
-        # DECISION LOGIC (using clear metrics)
-        # ============================================
-        reasoning = []
-        warnings = []
-        
-        # Add scenario warnings
-        for scenario in scenario_result.active_scenarios:
-            warnings.append(f"{scenario.icon} {scenario.message}")
-        
-        # Check if beginner trying scalp
-        if exp_config['block_scalps'] and request.trade_type == TradeType.SCALP:
-            verdict = 'WAIT'
-            confidence = 'HIGH'
-            reasoning.append("Scalp trading not recommended for beginners")
-            warnings.append("🛡️ Start with SWING trades to build experience")
-        
-        # Check regime
-        elif regime.get('reliable', False) and regime.get('adx', 0) < trade_config['adx_required']:
-            verdict = 'WAIT'
-            confidence = 'MEDIUM'
-            reasoning.append(f"ADX ({regime['adx']}) below required ({trade_config['adx_required']}) for {request.trade_type.value}")
-        
-        # Check BTC context for alts
-        elif coin != 'BTC_USDT' and not btc_context.get('support_alts', True):
-            verdict = 'WAIT'
-            confidence = 'MEDIUM'
-            reasoning.append("BTC is bearish – alts typically underperform")
-        
-        # Check EXPECTANCY first (most important)
-        elif expectancy < -10:
-            verdict = 'AVOID'
-            confidence = 'HIGH'
-            reasoning.append(f"Expectancy strongly negative: {expectancy:.1f}%")
-            reasoning.append("LOSS significantly more likely than WIN")
-        
-        # Check LOSS probability
-        elif loss_prob > 0.50:
-            verdict = 'AVOID'
-            confidence = 'HIGH'
-            reasoning.append(f"High LOSS probability: {loss_prob*100:.1f}%")
-        
-        # Check both READINESS and EXPECTANCY
-        elif readiness >= 0 and expectancy >= 0:
-            # Both positive = BUY
-            verdict = 'BUY'
-            confidence = 'HIGH' if readiness >= 5 and expectancy >= 5 else 'MEDIUM'
-            reasoning.append(f"Expectancy positive: {expectancy:.1f}%")
-            reasoning.append(f"WIN ({win_prob*100:.1f}%) above threshold ({adjusted_threshold*100:.0f}%)")
-        
-        elif readiness >= 0 and expectancy < 0:
-            # Meets threshold but expectancy negative - THE CONFUSING CASE WE FIXED!
-            verdict = 'WAIT'
-            confidence = 'MEDIUM'
-            reasoning.append(f"Above threshold but expectancy negative: {expectancy:.1f}%")
-            reasoning.append("Threshold met, but LOSS > WIN - wait for better setup")
-        
-        elif readiness >= -5:
-            # Near threshold
-            verdict = 'WAIT'
-            confidence = 'MEDIUM' if expectancy >= 0 else 'LOW'
-            reasoning.append(f"Near threshold (readiness: {readiness:.1f}%)")
-            if expectancy < 0:
-                reasoning.append(f"Expectancy negative: {expectancy:.1f}%")
-        
-        else:
-            verdict = 'WAIT'
-            confidence = 'LOW'
-            reasoning.append(f"Below threshold (readiness: {readiness:.1f}%)")
-            reasoning.append(f"Expectancy: {expectancy:.1f}%")
-        
-        # ============================================
-        # STEP 3: RISK ENGINE
-        # ============================================
-        
-        if verdict in ['AVOID', 'WAIT', 'BLOCKED']:
-            risk = {'action': 'NO_TRADE', 'position_size_usd': 0}
-        else:
-            pos_mult = (trade_config['position_mult'] * 
-                       exp_config['position_mult'] * 
-                       scenario_position_mult)
+        if verdict == 'BUY':
+            position_size_usd = round(request.capital * trade_analysis['position_size_pct'], 2)
+            entry_price = request.entry_price or price
+            stop_loss_price = round(entry_price * (1 - trade_analysis['stop_loss_pct'] / 100), 8)
+            take_profit_price = round(entry_price * (1 + trade_analysis['take_profit_pct'] / 100), 8)
+            max_loss = round(position_size_usd * trade_analysis['stop_loss_pct'] / 100, 2)
             
-            pos_pct = min(pos_mult * 0.3, 0.5)
-            pos_usd = request.capital * pos_pct
-            
-            risk = {
+            risk_info = {
                 'action': 'OPEN_POSITION',
-                'position_size_pct': round(pos_pct * 100, 1),
-                'position_size_usd': round(pos_usd, 2),
-                'entry_price': round(entry_price, 8 if entry_price < 0.01 else 2),
-                'stop_loss_pct': round(sl_pct * 100, 2),
-                'stop_loss_price': round(entry_price * (1 - sl_pct), 8 if entry_price < 0.01 else 2),
-                'take_profit_pct': round(tp_pct * 100, 2),
-                'take_profit_price': round(entry_price * (1 + tp_pct), 8 if entry_price < 0.01 else 2),
-                'max_loss_usd': round(pos_usd * sl_pct, 2),
-                'max_hold_hours': trade_config['max_hold_hours']
+                'position_size_usd': position_size_usd,
+                'position_size_pct': round(trade_analysis['position_size_pct'] * 100, 1),
+                'entry_price': entry_price,
+                'stop_loss_price': stop_loss_price,
+                'stop_loss_pct': trade_analysis['stop_loss_pct'],
+                'take_profit_price': take_profit_price,
+                'take_profit_pct': trade_analysis['take_profit_pct'],
+                'max_loss_usd': max_loss,
+                'max_hold_hours': trade_analysis['max_hold_hours'],
+                'risk_reward': trade_analysis['risk_reward_ratio']
+            }
+        else:
+            risk_info = {
+                'action': 'NO_TRADE',
+                'reason': block_reason if verdict == 'BLOCKED' else 'Conditions not met'
             }
         
-        # ============================================
+        # =====================================
         # FORECAST
-        # ============================================
-        moves = {
-            'BTC_USDT': {'up': 5, 'down': 4},
-            'ETH_USDT': {'up': 7, 'down': 5},
-            'SOL_USDT': {'up': 10, 'down': 8},
-            'PEPE_USDT': {'up': 15, 'down': 12}
-        }.get(coin, {'up': 5, 'down': 4})
+        # =====================================
         
-        sideways = max(0, 1 - win_prob - loss_prob)
-        
-        if win_prob > loss_prob and win_prob > sideways:
-            direction = 'BULLISH'
-        elif loss_prob > win_prob and loss_prob > sideways:
-            direction = 'BEARISH'
+        df = self.load_data(coin)
+        if df is not None and len(df) >= 24:
+            close = df['close'].values
+            volatility = np.std(close[-24:]) / np.mean(close[-24:]) * 100
+            bull_target = price * (1 + volatility * 1.5 / 100)
+            bear_target = price * (1 - volatility * 1.5 / 100)
         else:
-            direction = 'SIDEWAYS'
+            bull_target = price * 1.15
+            bear_target = price * 0.85
+        
+        direction = 'BULLISH' if win_prob > loss_prob else 'BEARISH' if loss_prob > win_prob else 'SIDEWAYS'
         
         forecast = {
             'direction': direction,
-            'current_price': current_price,
-            'bull_target': round(current_price * (1 + moves['up']/100), 8 if current_price < 0.01 else 2),
-            'bear_target': round(current_price * (1 - moves['down']/100), 8 if current_price < 0.01 else 2),
+            'current_price': price,
+            'bull_target': round(bull_target, 8),
+            'bear_target': round(bear_target, 8),
             'probabilities': {
-                'up': round(win_prob * 100, 1),
-                'sideways': round(sideways * 100, 1),
-                'down': round(loss_prob * 100, 1)
+                'up': win_prob,
+                'sideways': sideways_prob,
+                'down': loss_prob
             }
         }
         
-        # ============================================
-        # SUGGESTED ACTION (with new metrics)
-        # ============================================
-        suggested_action = self._get_suggested_action(
-            verdict, win_prob, adjusted_threshold, regime, expectancy, readiness
-        )
+        # =====================================
+        # SUGGESTED ACTION
+        # =====================================
         
-        # ============================================
-        # FINAL RESPONSE
-        # ============================================
-        return {
+        if verdict == 'BUY':
+            suggested_action = {
+                'action': 'EXECUTE',
+                'message': f'Conditions favorable for {trade_analysis["trade_type_info"]["name"]} trade',
+                'next_check': None,
+                'conditions': []
+            }
+        elif verdict == 'BLOCKED':
+            suggested_action = {
+                'action': 'STOP',
+                'message': block_reason,
+                'next_check': '1H' if 'FOMO' in (block_reason or '') else '4H',
+                'conditions': [b['message'] for b in trade_analysis['blocks']]
+            }
+        elif verdict == 'AVOID':
+            suggested_action = {
+                'action': 'STAY_OUT',
+                'message': 'Unfavorable conditions - do not enter',
+                'next_check': '4H',
+                'conditions': [
+                    f'Need LOSS < 50% (currently {loss_prob:.1f}%)',
+                    f'Need positive expectancy (currently {expectancy:.1f}%)'
+                ]
+            }
+        else:
+            conditions = []
+            if expectancy < 0:
+                conditions.append(f'Need expectancy > 0% (currently {expectancy:.1f}%)')
+            if readiness < 0:
+                conditions.append(f'Need WIN > {adjusted_threshold*100:.0f}% (currently {win_prob:.1f}%)')
+            
+            suggested_action = {
+                'action': 'MONITOR',
+                'message': 'Setup developing - not ready yet',
+                'next_check': '1H' if readiness > -5 else '4H',
+                'conditions': conditions
+            }
+        
+        # =====================================
+        # BUILD RESPONSE
+        # =====================================
+
+        response = {
             'coin': coin,
             'timestamp': datetime.now().isoformat(),
-            'price': current_price,
-            'price_source': 'WEBSOCKET' if ws_price else ('LIVE' if live_price else 'CACHED'),
+            'price': price,
+            'price_source': price_source,
             
+            # User inputs
             'capital': request.capital,
             'trade_type': request.trade_type.value,
-            'experience_level': request.experience_level.value,
+            'experience_level': request.experience.value,
+            'trade_reason': request.reason.value if request.reason else None,
             
+            # Verdict
             'verdict': verdict,
             'confidence': confidence,
-            
-            'model_ran': True,
+            'model_ran': probs.get('error') is None,
+            'blocked_by': trade_analysis['blocks'][0]['type'] if trade_analysis['blocks'] else None,
+            'block_reason': block_reason,
             
             # Probabilities
-            'win_probability': round(win_prob * 100, 1),
-            'loss_probability': round(loss_prob * 100, 1),
+            'win_probability': win_prob,
+            'loss_probability': loss_prob,
+            'sideways_probability': sideways_prob,
             'win_threshold_used': round(adjusted_threshold * 100, 1),
             
-            # NEW: Clear, non-confusing metrics
+            # Key metrics
             'expectancy': round(expectancy, 1),
             'expectancy_status': expectancy_status,
-            
             'readiness': round(readiness, 1),
             'readiness_status': readiness_status,
-            
-            # Keep risk-adjusted EV for advanced users
-            'risk_adjusted_ev': round(risk_adjusted_ev, 2),
             
             # Reasoning
             'reasoning': reasoning,
             'warnings': warnings,
             
-            # Scenarios
-            'active_scenarios': [s.dict() for s in scenario_result.active_scenarios],
-            'scenario_count': len(scenario_result.active_scenarios),
+            # Trade type analysis
+            'trade_type_info': trade_analysis['trade_type_info'],
+            'experience_info': trade_analysis['experience_info'],
+            'trade_type_requirements': trade_analysis['trade_type_requirements'],
             
+            # Risk
+            'risk': risk_info,
+            
+            # Forecast
             'forecast': forecast,
-            'risk': risk,
+            
+            # Suggested action
             'suggested_action': suggested_action,
             
+            # Market context
             'market_context': {
-                'btc': btc_context,
+                'btc': btc,
                 'regime': regime
-            }
+            },
+            
+            # Scenarios (simplified)
+            'active_scenarios': [
+                {
+                    'type': w.get('type', 'WARNING'),
+                    'title': w.get('type', 'Warning').replace('_', ' ').title(),
+                    'message': w.get('message', ''),
+                    'icon': '⚠️',
+                    'severity': w.get('severity', 'MEDIUM'),
+                    'effect': 'MODIFY'
+                }
+                for w in trade_analysis['warnings']
+            ],
+            'scenario_count': len(trade_analysis['warnings']) + len(trade_analysis['blocks'])
         }
-    
-    def _get_suggested_action(self, verdict, win_prob, threshold, regime, expectancy, readiness) -> dict:
-        if verdict == 'BUY':
-            return {
-                'action': 'EXECUTE',
-                'message': 'Conditions favorable – proceed with entry',
-                'next_check': None,
-                'why': f'Expectancy: +{expectancy:.1f}%, Readiness: +{readiness:.1f}%'
-            }
-        
-        elif verdict == 'AVOID':
-            return {
-                'action': 'STAY_OUT',
-                'message': 'High risk – do not enter',
-                'next_check': '4H',
-                'conditions': [
-                    f'Need expectancy > 0% (currently {expectancy:.1f}%)',
-                    'Wait for LOSS prob < 45%'
-                ]
-            }
-        
-        else:  # WAIT
-            conditions = []
-            
-            if expectancy < 0:
-                conditions.append(f'Need expectancy > 0% (currently {expectancy:.1f}%)')
-            
-            if readiness < 0:
-                conditions.append(f'Need WIN > {threshold*100:.0f}% (currently {win_prob*100:.1f}%)')
-            
-            if regime.get('adx', 0) < 18:
-                conditions.append(f'ADX needs > 18 (currently {regime.get("adx", 0)})')
-            
-            return {
-                'action': 'MONITOR',
-                'message': 'Not ready yet – monitor for improvement',
-                'next_check': '1H' if readiness > -5 else '4H',
-                'conditions': conditions if conditions else ['Wait for better setup']
-            }
-    
-    def scan_all(self) -> dict:
-        """Quick scan all coins with NEW metrics"""
+
+        # Sanitize numpy types for JSON serialization
+        return sanitize_for_json(response)
+
+    def scan_all(self) -> Dict:
+        """Quick scan of all coins"""
         signals = []
-        btc = self.market_context.get_btc_context()
+        btc = self.get_btc_context()
         
         for coin in self.coins:
             try:
-                req = AnalyzeRequest(coin=coin)
-                result = self.analyze(req)
+                request = AnalyzeRequest(coin=coin)
+                result = self.analyze(request)
                 
-                # Determine signal_strength based on verdict and confidence
-                if result['verdict'] == 'BUY':
-                    signal_strength = 'STRONG' if result['confidence'] == 'HIGH' else 'MODERATE'
-                elif result['verdict'] == 'AVOID':
-                    signal_strength = 'DANGER'
-                elif result['verdict'] == 'BLOCKED':
-                    signal_strength = 'DANGER'
-                else:
-                    signal_strength = 'NEUTRAL' if result['confidence'] == 'LOW' else 'WEAK'
-
                 signals.append({
                     'coin': coin,
                     'price': result['price'],
-                    'price_source': result.get('price_source', 'LIVE'),
+                    'price_source': result.get('price_source', 'CACHED'),
                     'verdict': result['verdict'],
                     'confidence': result['confidence'],
-                    'signal_strength': signal_strength,
                     'win_probability': result.get('win_probability'),
                     'loss_probability': result.get('loss_probability'),
-                    'warnings_count': len(result.get('warnings', [])),
-                    # NEW: Use expectancy and readiness instead of edge
                     'expectancy': result.get('expectancy'),
                     'readiness': result.get('readiness'),
+                    'forecast': {
+                        'direction': result.get('forecast', {}).get('direction', 'UNKNOWN'),
+                        'probabilities': result.get('forecast', {}).get('probabilities', {})
+                    },
                     'scenario_count': result['scenario_count'],
                     'model_ran': result['model_ran']
                 })
             except Exception as e:
                 print(f"Scan error {coin}: {e}")
         
-        # Sort by expectancy (most important for profitability)
+        # Sort by expectancy
         signals = sorted(signals, key=lambda x: x.get('expectancy') or -100, reverse=True)
         
         buy_signals = [s for s in signals if s['verdict'] == 'BUY']
@@ -856,179 +1314,458 @@ class TradingEngine:
         
         return {
             'timestamp': datetime.now().isoformat(),
-            'market_context': {
-                'btc': btc,
-                'overall_risk': 'HIGH' if any(s['verdict'] in ['BLOCKED', 'AVOID'] for s in signals) else 'NORMAL'
-            },
+            'market_context': {'btc': btc},
             'signals': signals,
             'buy_signals': buy_signals,
             'blocked_count': len(blocked),
             'market_summary': summary
         }
 
-
-# ============================================================
-# FASTAPI APP
-# ============================================================
-
-app = FastAPI(
-    title="Crypto AI Trading API",
-    description="Professional trading system with Expectancy + Readiness metrics",
-    version="4.1.0"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-print("\n" + "="*60)
-print("  🚀 Initializing Trading Engine v4.1...")
-print("="*60)
+# Global trading engine
 engine = TradingEngine()
-print("="*60 + "\n")
-
 
 # ============================================================
-# REST ENDPOINTS
+# API ROUTES
 # ============================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Start price streaming on startup"""
+    asyncio.create_task(price_streamer.start(engine.coins))
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop price streaming on shutdown"""
+    price_streamer.stop()
 
 @app.get("/")
 async def root():
     return {
         "name": "Crypto AI Trading API",
-        "version": "4.1.0",
+        "version": "5.0.0",
         "features": [
-            "Scenario Engine (gate layer)",
-            "WebSocket live prices",
-            "Decision Engine (ML)",
-            "Risk Engine",
-            "NEW: Expectancy (WIN% - LOSS%)",
-            "NEW: Readiness (WIN% - Threshold%)"
-        ],
-        "websocket": "ws://localhost:8000/ws/prices"
+            "Trade-type-specific analysis",
+            "Experience level modifiers",
+            "Enhanced FOMO detection",
+            "Real-time WebSocket prices",
+            "Expectancy & Readiness metrics"
+        ]
     }
 
 @app.get("/health")
 async def health():
     return {
         "status": "healthy",
-        "models": list(engine.models.keys()),
-        "scenario_engine": "active",
-        "price_streamer": "active" if price_streamer.running else "starting",
-        "connected_clients": len(price_streamer.clients),
-        "version": "4.1.0"
+        "websocket_connected": price_streamer.running,
+        "models_loaded": list(engine.models.keys()),
+        "prices_available": list(price_streamer.prices.keys())
     }
+
+@app.get("/prices")
+async def get_prices():
+    return price_streamer.prices
 
 @app.get("/scan")
 async def scan():
     return engine.scan_all()
 
-@app.post("/analyze")
-async def analyze_post(request: AnalyzeRequest):
-    try:
-        return engine.analyze(request)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
 @app.get("/analyze/{coin}")
-async def analyze_get(
+async def analyze(
     coin: str,
     capital: float = 1000,
-    trade_type: TradeType = TradeType.SWING,
-    experience: ExperienceLevel = ExperienceLevel.INTERMEDIATE,
-    reason: Optional[TradeReason] = None,
+    trade_type: str = "SWING",
+    experience: str = "INTERMEDIATE",
+    reason: Optional[str] = None,
     recent_losses: int = 0,
-    trades_today: int = 0
+    trades_today: int = 0,
+    entry_price: Optional[float] = None
 ):
-    request = AnalyzeRequest(
-        coin=coin,
-        capital=capital,
-        trade_type=trade_type,
-        experience_level=experience,
-        reason_for_trade=reason,
-        recent_losses=recent_losses,
-        trades_today=trades_today
-    )
-    return engine.analyze(request)
+    try:
+        # Validate trade_type
+        trade_type_upper = trade_type.upper()
+        if trade_type_upper not in ['SCALP', 'SHORT_TERM', 'SWING', 'INVESTMENT']:
+            trade_type_upper = 'SWING'
+        
+        # Validate experience
+        experience_upper = experience.upper()
+        if experience_upper not in ['BEGINNER', 'INTERMEDIATE', 'ADVANCED']:
+            experience_upper = 'INTERMEDIATE'
+        
+        # Validate reason
+        reason_enum = None
+        if reason:
+            reason_upper = reason.upper()
+            if reason_upper in ['STRATEGY', 'FOMO', 'NEWS', 'TIP', 'DIP_BUY']:
+                reason_enum = TradeReason(reason_upper)
+        
+        request = AnalyzeRequest(
+            coin=coin,
+            capital=capital,
+            trade_type=TradeType(trade_type_upper),
+            experience=ExperienceLevel(experience_upper),
+            reason=reason_enum,
+            recent_losses=recent_losses,
+            trades_today=trades_today,
+            entry_price=entry_price
+        )
+        return engine.analyze(request)
+    except Exception as e:
+        print(f"❌ Analyze error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/scenarios")
-async def get_scenarios():
-    return {
-        "active_news_flags": engine.scenario_engine.get_active_news_flags(),
-        "available_scenarios": [
-            "MARKET_CRASH", "MARKET_STRESS", "WEEKEND", 
-            "EXTENDED_MOVE", "FOMO_DETECTED", "OVERTRADING", "LOSING_STREAK"
-        ]
-    }
+@app.get("/config/trade-types")
+async def get_trade_types():
+    """Get trade type configurations"""
+    return TRADE_TYPE_CONFIG
 
-@app.post("/scenarios/news/{flag}")
-async def set_news_flag(flag: str):
-    engine.scenario_engine.set_news_flag(flag)
-    return {"status": "set", "flag": flag}
-
-@app.delete("/scenarios/news/{flag}")
-async def clear_news_flag(flag: str):
-    engine.scenario_engine.clear_news_flag(flag)
-    return {"status": "cleared", "flag": flag}
-
-@app.get("/scenarios/news/set/{flag}")
-async def set_news_flag_get(flag: str):
-    engine.scenario_engine.set_news_flag(flag)
-    return {"status": "set", "flag": flag, "active_flags": engine.scenario_engine.get_active_news_flags()}
-
-@app.get("/scenarios/news/clear/{flag}")
-async def clear_news_flag_get(flag: str):
-    engine.scenario_engine.clear_news_flag(flag)
-    return {"status": "cleared", "flag": flag, "active_flags": engine.scenario_engine.get_active_news_flags()}
-
-
-# ============================================================
-# WEBSOCKET ENDPOINTS
-# ============================================================
+@app.get("/config/experience")
+async def get_experience_levels():
+    """Get experience level configurations"""
+    return EXPERIENCE_MODIFIERS
 
 @app.websocket("/ws/prices")
 async def websocket_prices(websocket: WebSocket):
-    await price_streamer.connect_client(websocket)
+    """WebSocket endpoint for live prices"""
+    await websocket.accept()
+    price_streamer.clients.add(websocket)
     
     try:
+        # Send initial prices
+        await websocket.send_json({
+            'type': 'initial',
+            'prices': price_streamer.prices
+        })
+        
+        # Keep connection alive
         while True:
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_json({"type": "pong"})
-            elif data == "get_prices":
-                await websocket.send_json({
-                    "type": "all_prices",
-                    "prices": price_streamer.prices
-                })
-    except WebSocketDisconnect:
-        price_streamer.disconnect_client(websocket)
+            try:
+                await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+    finally:
+        price_streamer.clients.discard(websocket)
 
+# ============================================================
+# NEWS SERVICE
+# ============================================================
 
-@app.get("/prices/live")
-async def get_live_prices():
-    return {
-        "timestamp": datetime.now().isoformat(),
-        "prices": price_streamer.prices,
-        "source": "binance_websocket",
-        "connected_clients": len(price_streamer.clients)
-    }
+class NewsService:
+    """Service for fetching crypto and geopolitical news"""
 
+    def __init__(self):
+        self.cache = {}
+        self.cache_duration = 300  # 5 minutes cache
+        self.last_fetch = {}
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(price_streamer.start())
-    print("  🚀 Price streamer started")
+        # Keywords for sentiment analysis
+        self.bullish_keywords = [
+            'surge', 'rally', 'bull', 'gain', 'rise', 'up', 'high', 'record',
+            'adoption', 'approve', 'approved', 'etf', 'institutional', 'buy',
+            'bullish', 'breakout', 'moon', 'pump', 'growth', 'positive'
+        ]
+        self.bearish_keywords = [
+            'crash', 'drop', 'fall', 'bear', 'down', 'low', 'sell', 'dump',
+            'ban', 'fraud', 'hack', 'scam', 'regulation', 'sec', 'lawsuit',
+            'bearish', 'breakdown', 'fear', 'panic', 'negative', 'warning'
+        ]
 
+        # Geopolitical keywords that impact crypto
+        self.geo_impact_keywords = [
+            'federal reserve', 'fed', 'interest rate', 'inflation', 'war',
+            'sanctions', 'china', 'russia', 'dollar', 'economy', 'recession',
+            'bank', 'crisis', 'trade war', 'tariff', 'regulation'
+        ]
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    price_streamer.stop()
-    print("  🛑 Price streamer stopped")
+    def analyze_sentiment(self, text: str) -> Dict:
+        """Analyze sentiment of news text"""
+        text_lower = text.lower()
 
+        bullish_count = sum(1 for word in self.bullish_keywords if word in text_lower)
+        bearish_count = sum(1 for word in self.bearish_keywords if word in text_lower)
+
+        if bullish_count > bearish_count:
+            sentiment = 'BULLISH'
+            score = min(bullish_count / 3, 1.0)
+        elif bearish_count > bullish_count:
+            sentiment = 'BEARISH'
+            score = -min(bearish_count / 3, 1.0)
+        else:
+            sentiment = 'NEUTRAL'
+            score = 0.0
+
+        return {
+            'sentiment': sentiment,
+            'score': round(score, 2),
+            'bullish_signals': bullish_count,
+            'bearish_signals': bearish_count
+        }
+
+    def has_geo_impact(self, text: str) -> bool:
+        """Check if news has geopolitical market impact"""
+        text_lower = text.lower()
+        return any(keyword in text_lower for keyword in self.geo_impact_keywords)
+
+    async def fetch_crypto_news(self) -> List[Dict]:
+        """Fetch crypto news from multiple sources"""
+        import aiohttp
+        import xml.etree.ElementTree as ET
+
+        cache_key = 'crypto_news'
+        now = datetime.now().timestamp()
+
+        # Check cache
+        if cache_key in self.cache and cache_key in self.last_fetch:
+            if now - self.last_fetch[cache_key] < self.cache_duration:
+                return self.cache[cache_key]
+
+        news_items = []
+
+        # RSS feeds for crypto news
+        rss_feeds = [
+            ('https://cointelegraph.com/rss', 'CoinTelegraph'),
+            ('https://coindesk.com/arc/outboundfeeds/rss/', 'CoinDesk'),
+            ('https://decrypt.co/feed', 'Decrypt'),
+            ('https://bitcoinmagazine.com/feed', 'Bitcoin Magazine'),
+        ]
+
+        async with aiohttp.ClientSession() as session:
+            for feed_url, source in rss_feeds:
+                try:
+                    async with session.get(feed_url, timeout=10) as response:
+                        if response.status == 200:
+                            content = await response.text()
+                            root = ET.fromstring(content)
+
+                            # Parse RSS items
+                            for item in root.findall('.//item')[:5]:  # Get top 5 from each
+                                title = item.find('title')
+                                link = item.find('link')
+                                pub_date = item.find('pubDate')
+                                description = item.find('description')
+
+                                if title is not None:
+                                    title_text = title.text or ''
+                                    desc_text = (description.text or '')[:200] if description is not None else ''
+
+                                    # Analyze sentiment
+                                    sentiment = self.analyze_sentiment(title_text + ' ' + desc_text)
+
+                                    news_items.append({
+                                        'title': title_text,
+                                        'source': source,
+                                        'url': link.text if link is not None else '',
+                                        'published': pub_date.text if pub_date is not None else '',
+                                        'description': desc_text,
+                                        'sentiment': sentiment['sentiment'],
+                                        'sentiment_score': sentiment['score'],
+                                        'category': 'CRYPTO',
+                                        'has_market_impact': abs(sentiment['score']) > 0.3
+                                    })
+                except Exception as e:
+                    print(f"Error fetching from {source}: {e}")
+
+        # Sort by sentiment impact (most impactful first)
+        news_items.sort(key=lambda x: abs(x['sentiment_score']), reverse=True)
+
+        # Cache results
+        self.cache[cache_key] = news_items[:20]  # Keep top 20
+        self.last_fetch[cache_key] = now
+
+        return self.cache[cache_key]
+
+    async def fetch_geopolitical_news(self) -> List[Dict]:
+        """Fetch geopolitical news that may impact crypto markets"""
+        import aiohttp
+        import xml.etree.ElementTree as ET
+
+        cache_key = 'geo_news'
+        now = datetime.now().timestamp()
+
+        # Check cache
+        if cache_key in self.cache and cache_key in self.last_fetch:
+            if now - self.last_fetch[cache_key] < self.cache_duration:
+                return self.cache[cache_key]
+
+        news_items = []
+
+        # RSS feeds for financial/geopolitical news
+        rss_feeds = [
+            ('https://feeds.bbci.co.uk/news/business/rss.xml', 'BBC Business'),
+            ('https://rss.nytimes.com/services/xml/rss/nyt/Business.xml', 'NY Times Business'),
+            ('https://feeds.reuters.com/reuters/businessNews', 'Reuters'),
+            ('https://www.cnbc.com/id/100003114/device/rss/rss.html', 'CNBC'),
+        ]
+
+        async with aiohttp.ClientSession() as session:
+            for feed_url, source in rss_feeds:
+                try:
+                    async with session.get(feed_url, timeout=10) as response:
+                        if response.status == 200:
+                            content = await response.text()
+                            root = ET.fromstring(content)
+
+                            # Parse RSS items
+                            for item in root.findall('.//item')[:10]:
+                                title = item.find('title')
+                                link = item.find('link')
+                                pub_date = item.find('pubDate')
+                                description = item.find('description')
+
+                                if title is not None:
+                                    title_text = title.text or ''
+                                    desc_text = (description.text or '')[:200] if description is not None else ''
+                                    full_text = title_text + ' ' + desc_text
+
+                                    # Only include if it has potential market impact
+                                    if self.has_geo_impact(full_text):
+                                        sentiment = self.analyze_sentiment(full_text)
+
+                                        # Determine impact type
+                                        impact_type = 'NEUTRAL'
+                                        if any(w in full_text.lower() for w in ['war', 'crisis', 'sanctions', 'ban']):
+                                            impact_type = 'HIGH_RISK'
+                                        elif any(w in full_text.lower() for w in ['fed', 'interest rate', 'inflation']):
+                                            impact_type = 'MONETARY'
+                                        elif any(w in full_text.lower() for w in ['regulation', 'sec', 'law']):
+                                            impact_type = 'REGULATORY'
+
+                                        news_items.append({
+                                            'title': title_text,
+                                            'source': source,
+                                            'url': link.text if link is not None else '',
+                                            'published': pub_date.text if pub_date is not None else '',
+                                            'description': desc_text,
+                                            'sentiment': sentiment['sentiment'],
+                                            'sentiment_score': sentiment['score'],
+                                            'category': 'GEOPOLITICAL',
+                                            'impact_type': impact_type,
+                                            'has_market_impact': True
+                                        })
+                except Exception as e:
+                    print(f"Error fetching from {source}: {e}")
+
+        # Sort by recency (assuming pub_date parsing)
+        self.cache[cache_key] = news_items[:15]  # Keep top 15
+        self.last_fetch[cache_key] = now
+
+        return self.cache[cache_key]
+
+    async def get_market_sentiment_summary(self) -> Dict:
+        """Get overall market sentiment from news"""
+        crypto_news = await self.fetch_crypto_news()
+        geo_news = await self.fetch_geopolitical_news()
+
+        all_news = crypto_news + geo_news
+
+        if not all_news:
+            return {
+                'overall_sentiment': 'NEUTRAL',
+                'sentiment_score': 0,
+                'bullish_count': 0,
+                'bearish_count': 0,
+                'neutral_count': 0,
+                'high_impact_count': 0
+            }
+
+        bullish = sum(1 for n in all_news if n['sentiment'] == 'BULLISH')
+        bearish = sum(1 for n in all_news if n['sentiment'] == 'BEARISH')
+        neutral = sum(1 for n in all_news if n['sentiment'] == 'NEUTRAL')
+        high_impact = sum(1 for n in all_news if n.get('has_market_impact', False))
+
+        avg_score = sum(n['sentiment_score'] for n in all_news) / len(all_news)
+
+        if avg_score > 0.2:
+            overall = 'BULLISH'
+        elif avg_score < -0.2:
+            overall = 'BEARISH'
+        else:
+            overall = 'NEUTRAL'
+
+        return {
+            'overall_sentiment': overall,
+            'sentiment_score': round(avg_score, 2),
+            'bullish_count': bullish,
+            'bearish_count': bearish,
+            'neutral_count': neutral,
+            'high_impact_count': high_impact,
+            'total_news': len(all_news)
+        }
+
+# Global news service
+news_service = NewsService()
+
+# ============================================================
+# NEWS API ROUTES
+# ============================================================
+
+@app.get("/news/crypto")
+async def get_crypto_news():
+    """Get latest crypto news with sentiment analysis"""
+    try:
+        news = await news_service.fetch_crypto_news()
+        sentiment = await news_service.get_market_sentiment_summary()
+        return {
+            'news': news,
+            'market_sentiment': sentiment,
+            'timestamp': datetime.now().isoformat()
+        }
+    except Exception as e:
+        print(f"Error fetching crypto news: {e}")
+        return {
+            'news': [],
+            'market_sentiment': {'overall_sentiment': 'UNKNOWN'},
+            'error': str(e)
+        }
+
+@app.get("/news/geopolitical")
+async def get_geopolitical_news():
+    """Get geopolitical news that may impact crypto markets"""
+    try:
+        news = await news_service.fetch_geopolitical_news()
+        return {
+            'news': news,
+            'timestamp': datetime.now().isoformat()
+        }
+    except Exception as e:
+        print(f"Error fetching geopolitical news: {e}")
+        return {
+            'news': [],
+            'error': str(e)
+        }
+
+@app.get("/news/all")
+async def get_all_news():
+    """Get all news (crypto + geopolitical) with sentiment summary"""
+    try:
+        crypto_news = await news_service.fetch_crypto_news()
+        geo_news = await news_service.fetch_geopolitical_news()
+        sentiment = await news_service.get_market_sentiment_summary()
+
+        return {
+            'crypto_news': crypto_news,
+            'geopolitical_news': geo_news,
+            'market_sentiment': sentiment,
+            'timestamp': datetime.now().isoformat()
+        }
+    except Exception as e:
+        print(f"Error fetching news: {e}")
+        return {
+            'crypto_news': [],
+            'geopolitical_news': [],
+            'market_sentiment': {'overall_sentiment': 'UNKNOWN'},
+            'error': str(e)
+        }
+
+@app.get("/news/sentiment")
+async def get_news_sentiment():
+    """Get market sentiment summary from news"""
+    try:
+        sentiment = await news_service.get_market_sentiment_summary()
+        return sentiment
+    except Exception as e:
+        return {'overall_sentiment': 'UNKNOWN', 'error': str(e)}
 
 # ============================================================
 # MAIN
@@ -1036,17 +1773,7 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
-    print("\n" + "#"*60)
-    print("  🚀 CRYPTO AI TRADING API v4.1")
-    print("#"*60)
-    print("\n  FIXED in v4.1:")
-    print("    📊 Expectancy: WIN% - LOSS%")
-    print("       → Is this trade profitable?")
-    print("    📊 Readiness: WIN% - Threshold%")
-    print("       → How close to entry?")
-    print("\n  No more confusing 'Edge' metric!")
-    print("\n  Server: http://localhost:8000")
-    print("  Docs: http://localhost:8000/docs")
-    print("\n" + "#"*60 + "\n")
-    
+    print("🚀 Starting Crypto AI Trading API v5.0")
+    print("📊 Trade-Type-Specific Analysis System")
+    print("📰 News Feed Service Enabled")
     uvicorn.run(app, host="0.0.0.0", port=8000)
