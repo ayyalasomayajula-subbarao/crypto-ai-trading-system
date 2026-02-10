@@ -1,14 +1,13 @@
 """
-Crypto AI Trading API - v5.0
-Complete Trade-Type-Specific Analysis System
+Crypto AI Trading API - v6.0
+Complete Trade-Type-Specific Analysis System with AI-Powered Insights
 
-FEATURES in v5.0:
-- Trade-type-specific thresholds (Scalp/Short/Swing/Investment)
-- Experience level modifiers
-- Enhanced FOMO detection with trade-type sensitivity
-- ADX/Regime requirements per trade type
-- Complete position sizing based on trade type
-- Educational reasoning for users
+FEATURES in v6.0:
+- Everything from v5.0
+- Groq (FREE) as primary AI provider (Llama 3.3 70B)
+- OpenAI as fallback AI provider (GPT-3.5-turbo)
+- AI-powered trade analysis with natural language insights
+- Structured JSON responses from LLM
 """
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -23,10 +22,422 @@ from datetime import datetime, timedelta
 from enum import Enum
 import asyncio
 import json
+from dotenv import load_dotenv
+from ta.volume import OnBalanceVolumeIndicator, MFIIndicator, ForceIndexIndicator
+
+# Load environment variables
+load_dotenv()
+
+# ============================================================
+# AI SERVICE (Groq FREE + OpenAI Fallback)
+# ============================================================
+
+class AIService:
+    """AI-powered analysis using Groq (free) as primary and OpenAI as fallback"""
+
+    def __init__(self):
+        self.groq_client = None
+        self.openai_client = None
+        self.groq_available = False
+        self.openai_available = False
+
+        # Initialize Groq
+        groq_key = os.getenv('GROQ_API_KEY', '')
+        if groq_key and groq_key != 'gsk_your_groq_key_here':
+            try:
+                from groq import Groq
+                self.groq_client = Groq(api_key=groq_key)
+                self.groq_available = True
+                print("  Groq (FREE):    Ready")
+            except ImportError:
+                print("  Groq (FREE):    Not installed (pip install groq)")
+            except Exception as e:
+                print(f"  Groq (FREE):    Error - {e}")
+        else:
+            print("  Groq (FREE):    No API key set")
+
+        # Initialize OpenAI
+        openai_key = os.getenv('OPENAI_API_KEY', '')
+        if openai_key and openai_key != 'your_openai_key_here':
+            try:
+                from openai import OpenAI
+                self.openai_client = OpenAI(api_key=openai_key)
+                self.openai_available = True
+                print("  OpenAI:         Ready")
+            except ImportError:
+                print("  OpenAI:         Not installed (pip install openai)")
+            except Exception as e:
+                print(f"  OpenAI:         Error - {e}")
+        else:
+            print("  OpenAI:         No API key set")
+
+    def build_prompt(self, coin: str, analysis_data: Dict, market_sentiment: Dict = None, news_data: Dict = None, derivatives_data: Dict = None, whale_data: Dict = None) -> str:
+        """Build a comprehensive prompt for deep AI analysis"""
+        price = analysis_data.get('price', 0)
+        verdict = analysis_data.get('verdict', 'UNKNOWN')
+        win_prob = analysis_data.get('win_probability', 0)
+        loss_prob = analysis_data.get('loss_probability', 0)
+        sideways_prob = analysis_data.get('sideways_probability', 0)
+        expectancy = analysis_data.get('expectancy', 0)
+        readiness = analysis_data.get('readiness', 0)
+        trade_type = analysis_data.get('trade_type', 'SWING')
+        experience = analysis_data.get('experience_level', 'INTERMEDIATE')
+        capital = analysis_data.get('capital', 1000)
+
+        regime = analysis_data.get('market_context', {}).get('regime', {})
+        adx = regime.get('adx', 0)
+        market_regime = regime.get('regime', 'UNKNOWN')
+        volatility = regime.get('volatility', 'UNKNOWN')
+        volatility_pct = regime.get('volatility_pct', 0)
+
+        btc = analysis_data.get('market_context', {}).get('btc', {})
+        btc_trend = btc.get('overall_trend', 'NEUTRAL')
+        btc_price = btc.get('price', 0)
+        btc_change = btc.get('change_24h', 0)
+
+        reasoning = analysis_data.get('reasoning', [])
+        warnings = analysis_data.get('warnings', [])
+
+        forecast = analysis_data.get('forecast', {})
+        bull_target = forecast.get('bull_target', 0)
+        bear_target = forecast.get('bear_target', 0)
+
+        # Risk management data
+        risk = analysis_data.get('risk', {})
+        risk_section = ""
+        if risk.get('action') == 'OPEN_POSITION':
+            risk_section = f"""
+POSITION SIZING:
+- Suggested Position: ${risk.get('position_size_usd', 0):,.2f} ({risk.get('position_size_pct', 0)}% of capital)
+- Entry Price: ${risk.get('entry_price', 0):,.8g}
+- Stop Loss: ${risk.get('stop_loss_price', 0):,.8g} (-{risk.get('stop_loss_pct', 0)}%)
+- Take Profit: ${risk.get('take_profit_price', 0):,.8g} (+{risk.get('take_profit_pct', 0)}%)
+- Max Loss: ${risk.get('max_loss_usd', 0):,.2f}
+- Risk/Reward: {risk.get('risk_reward', 'N/A')}"""
+
+        # Volume analysis data
+        vol = analysis_data.get('volume_analysis', {})
+        vol_signal = vol.get('overall_signal', 'N/A')
+        vol_summary = vol.get('summary', 'No volume data')
+        obv = vol.get('obv', {})
+        mfi = vol.get('mfi', {})
+        delta = vol.get('buy_sell_delta', {})
+        spikes = vol.get('volume_spikes', {})
+
+        # Volume Profile data
+        vp = vol.get('volume_profile', {})
+        poc = vp.get('poc', {})
+        hvn_list = vp.get('hvn', [])
+        lvn_list = vp.get('lvn', [])
+
+        vp_section = ""
+        if poc.get('price', 0) > 0:
+            hvn_prices = ', '.join([formatPrice(h['price']) for h in hvn_list[:5]]) if hvn_list else 'None'
+            lvn_prices = ', '.join([formatPrice(l['price']) for l in lvn_list[:5]]) if lvn_list else 'None'
+            vp_section = f"""
+- Volume Profile (7d):
+  * POC (Fair Value): {formatPrice(poc.get('price', 0))} ({poc.get('volume_pct', 0):.1f}% of volume)
+  * Value Area: {formatPrice(vp.get('value_area_low', 0))} - {formatPrice(vp.get('value_area_high', 0))}
+  * Price vs POC: {vp.get('price_vs_poc', 'N/A')}
+  * HVN (Support/Resistance): {hvn_prices}
+  * LVN (Fast-move zones): {lvn_prices}
+  * Analysis: {vp.get('analysis', 'N/A')}"""
+
+        volume_section = f"""
+VOLUME ANALYSIS:
+- Overall Volume Signal: {vol_signal}
+- Summary: {vol_summary}
+- OBV Trend: {obv.get('trend', 'N/A')} | Divergence: {obv.get('divergence', 'NONE')}
+- MFI: {mfi.get('value', 0):.1f} ({mfi.get('zone', 'N/A')}) - {mfi.get('interpretation', 'N/A')}
+- Buy/Sell Delta: {delta.get('delta_pct', 0):.1f}% ({delta.get('pressure', 'N/A')}) | Strength: {delta.get('strength', 'N/A')}
+- Volume Spike Ratio: {spikes.get('current_ratio', 0):.2f}x | Active Spike: {'YES' if spikes.get('is_spike') else 'NO'}
+- Spike Count (24h): {spikes.get('spike_count_24h', 0)}{vp_section}"""
+
+        # Market sentiment section
+        sentiment_section = ""
+        if market_sentiment:
+            fg = market_sentiment.get('fear_greed', {})
+            fr = market_sentiment.get('funding_rate', {})
+            oi = market_sentiment.get('open_interest', {})
+            overall_sent = market_sentiment.get('overall_sentiment', 'UNKNOWN')
+            sentiment_section = f"""
+MARKET SENTIMENT DATA:
+- Overall Market Sentiment: {overall_sent}
+- Fear & Greed Index: {fg.get('value', 'N/A')} ({fg.get('label', 'N/A')}) | Trend: {fg.get('trend', 'N/A')}
+- Funding Rate: {fr.get('rate_pct', 'N/A')} ({fr.get('sentiment', 'N/A')}) - {fr.get('interpretation', 'N/A')}
+- Open Interest: {oi.get('formatted', 'N/A')}"""
+
+        # News section
+        news_section = ""
+        if news_data:
+            news_sentiment = news_data.get('market_sentiment', {})
+            news_items = news_data.get('crypto_news', [])[:8]
+            geo_items = news_data.get('geopolitical_news', [])[:4]
+            news_section = f"""
+NEWS & HEADLINES:
+- News Sentiment: {news_sentiment.get('overall_sentiment', 'NEUTRAL')} (Score: {news_sentiment.get('sentiment_score', 0)})
+- Bullish Headlines: {news_sentiment.get('bullish_count', 0)} | Bearish: {news_sentiment.get('bearish_count', 0)} | High Impact: {news_sentiment.get('high_impact_count', 0)}"""
+            if news_items:
+                news_section += "\n- Recent Crypto Headlines:"
+                for n in news_items[:6]:
+                    news_section += f"\n  * [{n.get('sentiment', 'NEUTRAL')}] {n.get('title', '')}"
+            if geo_items:
+                news_section += "\n- Geopolitical Headlines:"
+                for n in geo_items[:3]:
+                    news_section += f"\n  * [{n.get('impact_type', 'NEUTRAL')}] {n.get('title', '')}"
+
+        # Derivatives data section
+        derivatives_section = ""
+        if derivatives_data and derivatives_data.get('overall_signal') != 'ERROR':
+            ls = derivatives_data.get('long_short_ratio', {})
+            tk = derivatives_data.get('taker_volume', {})
+            ob = derivatives_data.get('order_book', {})
+            liq = derivatives_data.get('liquidations', {})
+            top = ls.get('top_traders', {})
+            glb = ls.get('global', {})
+            derivatives_section = f"""
+DERIVATIVES INTELLIGENCE:
+- Overall Derivatives Signal: {derivatives_data.get('overall_signal', 'N/A')}
+- L/S Ratio (Top Traders): {top.get('long_pct', 50):.1f}% Long / {top.get('short_pct', 50):.1f}% Short | Trend: {top.get('trend', 'N/A')}
+- L/S Ratio (Global): {glb.get('long_pct', 50):.1f}% Long / {glb.get('short_pct', 50):.1f}% Short | Trend: {glb.get('trend', 'N/A')}
+- Smart Money Signal: {ls.get('signal', 'N/A')}
+- Taker Buy/Sell: Ratio {tk.get('ratio', 1.0):.3f} | Pressure: {tk.get('pressure', 'N/A')} | Trend: {tk.get('trend', 'N/A')}
+- Order Book: Bid/Ask Ratio {ob.get('bid_ask_ratio', 1.0):.3f} | Imbalance: {ob.get('imbalance', 'N/A')}
+- Bid Wall: {formatPrice(ob.get('strongest_bid', {}).get('price', 0))} (${ob.get('strongest_bid', {}).get('size_usd', 0):,.0f})
+- Ask Wall: {formatPrice(ob.get('strongest_ask', {}).get('price', 0))} (${ob.get('strongest_ask', {}).get('size_usd', 0):,.0f})
+- OI Change (24h): {liq.get('oi_change_pct', 0):.1f}% | Signal: {liq.get('recent_signal', 'NONE')}
+- Nearest Long Liq (100x): {formatPrice(liq.get('nearest_long_liq', {}).get('price', 0)) if liq.get('nearest_long_liq') else 'N/A'}
+- Nearest Short Liq (100x): {formatPrice(liq.get('nearest_short_liq', {}).get('price', 0)) if liq.get('nearest_short_liq') else 'N/A'}"""
+
+        # Whale activity section
+        whale_section = ""
+        if whale_data and whale_data.get('whale_signal') != 'ERROR':
+            whale_section = f"""
+WHALE ACTIVITY:
+- Whale Signal: {whale_data.get('whale_signal', 'NEUTRAL')}
+- Large Trade Count: {whale_data.get('large_trade_count', 0)}
+- Alert: {whale_data.get('alert', 'None')}"""
+            txs = whale_data.get('recent_large_txs', [])
+            if txs:
+                whale_section += "\n- Recent Large Transactions:"
+                for tx in txs[:5]:
+                    whale_section += f"\n  * {tx.get('value_display', 'N/A')} at {tx.get('time', 'N/A')}"
+
+        coin_display = coin.replace('_', '/')
+        prompt = f"""You are a top-tier crypto trading analyst providing institutional-grade analysis. Analyze ALL the data below and provide a comprehensive, decision-ready analysis for {coin_display}.
+
+Think deeply about the interplay between technical indicators, volume flow, market sentiment, macro conditions, and news. Consider what experienced traders would look for.
+
+=== CORE DATA ===
+
+COIN: {coin_display}
+CURRENT PRICE: ${price:,.8g}
+TRADE TYPE: {trade_type} | EXPERIENCE: {experience} | CAPITAL: ${capital:,.2f}
+
+MODEL ANALYSIS:
+- System Verdict: {verdict}
+- WIN Probability: {win_prob:.1f}% | LOSS: {loss_prob:.1f}% | SIDEWAYS: {sideways_prob:.1f}%
+- Expectancy (WIN-LOSS): {expectancy:.1f}%
+- Readiness (WIN-Threshold): {readiness:.1f}%
+
+MARKET CONDITIONS:
+- ADX (Trend Strength): {adx:.1f} | Market Regime: {market_regime}
+- Volatility: {volatility} ({volatility_pct:.1f}%)
+- BTC: ${btc_price:,.2f} ({btc_change:+.1f}% 24h) | Trend: {btc_trend}
+{risk_section}
+{volume_section}
+{sentiment_section}
+{news_section}
+{derivatives_section}
+{whale_section}
+
+PRICE TARGETS: Bull ${bull_target:,.8g} | Bear ${bear_target:,.8g}
+SYSTEM REASONING: {'; '.join(reasoning)}
+WARNINGS: {'; '.join(warnings) if warnings else 'None'}
+
+=== INSTRUCTIONS ===
+
+Provide a DEEP analysis. Do NOT just restate the numbers — interpret them, find patterns, explain what they mean together, and give the trader a clear decision framework.
+
+Respond with ONLY valid JSON (no markdown, no code blocks) in this exact format:
+{{
+  "ai_verdict": "BUY" or "WAIT" or "AVOID",
+  "confidence_score": 1-10,
+  "tldr": "2-3 sentence executive summary that captures the key situation and recommended action. Be specific about price levels and probabilities.",
+  "key_insights": [
+    "Insight 1: A specific observation combining multiple data points (e.g. volume + price action + sentiment)",
+    "Insight 2: Another cross-referenced insight",
+    "Insight 3: A third actionable insight"
+  ],
+  "positives": [
+    {{
+      "title": "Short title (e.g. 'Strong Volume Accumulation')",
+      "detail": "Detailed explanation of why this is bullish, referencing specific data points. 2-3 sentences."
+    }},
+    {{
+      "title": "Another positive factor",
+      "detail": "Detailed explanation. 2-3 sentences."
+    }},
+    {{
+      "title": "Third positive",
+      "detail": "Detailed explanation. 2-3 sentences."
+    }}
+  ],
+  "risks": [
+    {{
+      "title": "Short title (e.g. 'Bearish Momentum Persists')",
+      "detail": "Detailed explanation of the risk, referencing specific data. 2-3 sentences.",
+      "severity": "HIGH" or "MEDIUM" or "LOW"
+    }},
+    {{
+      "title": "Another risk factor",
+      "detail": "Detailed explanation. 2-3 sentences.",
+      "severity": "HIGH" or "MEDIUM" or "LOW"
+    }},
+    {{
+      "title": "Third risk",
+      "detail": "Detailed explanation. 2-3 sentences.",
+      "severity": "HIGH" or "MEDIUM" or "LOW"
+    }}
+  ],
+  "market_pulse": {{
+    "trend_summary": "1 sentence on the current trend direction and strength",
+    "volume_verdict": "1 sentence on what volume is telling us",
+    "sentiment_verdict": "1 sentence on overall market mood from sentiment data and news",
+    "macro_context": "1 sentence on BTC influence and broader market conditions"
+  }},
+  "entry_strategy": "Specific, actionable entry strategy with price levels. Include when to enter, where to set stops, and profit targets.",
+  "what_to_watch": ["Specific trigger or level 1", "Specific trigger or level 2", "Specific trigger or level 3"],
+  "sentiment_read": "BULLISH" or "BEARISH" or "NEUTRAL",
+  "conviction_reason": "The single most important factor driving your verdict. Be specific."
+}}"""
+        return prompt
+
+    async def get_ai_analysis(self, coin: str, analysis_data: Dict, market_sentiment: Dict = None, news_data: Dict = None, derivatives_data: Dict = None, whale_data: Dict = None) -> Dict:
+        """Get AI analysis using Groq (primary) or OpenAI (fallback)"""
+        prompt = self.build_prompt(coin, analysis_data, market_sentiment, news_data, derivatives_data, whale_data)
+
+        # Try Groq first (FREE)
+        if self.groq_available:
+            try:
+                result = await self._call_groq(prompt)
+                if result:
+                    result['ai_provider'] = 'Groq (Llama 3.3 70B)'
+                    result['ai_cost'] = 'FREE'
+                    return result
+            except Exception as e:
+                print(f"  Groq error: {e}")
+
+        # Fallback to OpenAI
+        if self.openai_available:
+            try:
+                result = await self._call_openai(prompt)
+                if result:
+                    result['ai_provider'] = 'OpenAI (GPT-3.5-turbo)'
+                    result['ai_cost'] = 'Paid'
+                    return result
+            except Exception as e:
+                print(f"  OpenAI error: {e}")
+
+        return {
+            'error': 'No AI provider available. Set GROQ_API_KEY or OPENAI_API_KEY in .env',
+            'ai_provider': 'None',
+            'ai_cost': 'N/A'
+        }
+
+    async def _call_groq(self, prompt: str) -> Optional[Dict]:
+        """Call Groq API (free tier)"""
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        def _sync_call():
+            response = self.groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": "You are an institutional-grade crypto trading analyst. Provide deep, cross-referenced analysis combining technicals, volume, sentiment, and macro data. Always respond with valid JSON only. No markdown formatting."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.4,
+                max_tokens=2000
+            )
+            return response.choices[0].message.content
+
+        raw = await loop.run_in_executor(None, _sync_call)
+        return self._parse_ai_response(raw)
+
+    async def _call_openai(self, prompt: str) -> Optional[Dict]:
+        """Call OpenAI API (fallback)"""
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        def _sync_call():
+            response = self.openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are an institutional-grade crypto trading analyst. Provide deep, cross-referenced analysis combining technicals, volume, sentiment, and macro data. Always respond with valid JSON only. No markdown formatting."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.4,
+                max_tokens=2000
+            )
+            return response.choices[0].message.content
+
+        raw = await loop.run_in_executor(None, _sync_call)
+        return self._parse_ai_response(raw)
+
+    def _parse_ai_response(self, raw: str) -> Optional[Dict]:
+        """Parse AI response, handling potential markdown wrapping"""
+        if not raw:
+            return None
+
+        # Strip markdown code block if present
+        text = raw.strip()
+        if text.startswith('```'):
+            # Remove first line (```json or ```)
+            lines = text.split('\n')
+            text = '\n'.join(lines[1:])
+            if text.endswith('```'):
+                text = text[:-3].strip()
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Try to extract JSON from response
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end != -1:
+                try:
+                    return json.loads(text[start:end + 1])
+                except json.JSONDecodeError:
+                    pass
+
+            return {
+                'summary': text[:500],
+                'key_insights': ['AI response could not be parsed as JSON'],
+                'ai_verdict': 'UNKNOWN',
+                'confidence_score': 0
+            }
+
+
+# Global AI service (initialized at startup)
+ai_service = None
 
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
+
+def formatPrice(p: float) -> str:
+    """Format a price for display"""
+    if p < 0.0001:
+        return f"${p:.8f}"
+    elif p < 0.01:
+        return f"${p:.6f}"
+    elif p < 1:
+        return f"${p:.4f}"
+    elif p < 1000:
+        return f"${p:.2f}"
+    else:
+        return f"${p:,.2f}"
 
 def sanitize_for_json(obj):
     """Convert numpy types to Python native types for JSON serialization"""
@@ -237,8 +648,8 @@ class AnalyzeRequest(BaseModel):
 
 app = FastAPI(
     title="Crypto AI Trading API",
-    version="5.0.0",
-    description="Trade-Type-Specific Analysis System"
+    version="6.0.0",
+    description="Trade-Type-Specific Analysis System with AI-Powered Insights"
 )
 
 # CORS - Allow all origins for development
@@ -582,7 +993,363 @@ class TradingEngine:
             result['volatility'] = 'UNKNOWN'
 
         return result
-    
+
+    def _fetch_fresh_klines(self, coin: str, interval: str = '1h', limit: int = 168) -> Optional[pd.DataFrame]:
+        """Fetch fresh OHLCV klines from Binance API (free, no auth).
+        Returns DataFrame with columns: timestamp, open, high, low, close, volume
+        """
+        try:
+            import requests
+            symbol = coin.replace('_', '')  # BTC_USDT -> BTCUSDT
+            url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                df = pd.DataFrame(data, columns=[
+                    'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                    'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                    'taker_buy_quote', 'ignore'
+                ])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+        except Exception as e:
+            print(f"  Binance klines fetch error for {coin}: {e}")
+        return None
+
+    def get_volume_profile(self, coin: str, live_price: float = 0, num_levels: int = 20, lookback: int = 168) -> Dict:
+        """Calculate Volume Profile (TPO) from fresh Binance data (fallback to CSV).
+
+        Returns POC (Point of Control), Value Area, HVN/LVN levels.
+        lookback: number of 1h candles to analyze (default 168 = 7 days)
+        num_levels: number of price bins
+        live_price: current live price from WebSocket/API
+        """
+        result = {
+            'poc': {'price': 0, 'volume': 0, 'volume_pct': 0},
+            'value_area_high': 0,
+            'value_area_low': 0,
+            'current_price': 0,
+            'price_vs_poc': 'AT_POC',
+            'levels': [],
+            'hvn': [],
+            'lvn': [],
+            'data_source': 'CSV',
+            'analysis': ''
+        }
+
+        # Try fresh Binance data first, fall back to CSV
+        df = self._fetch_fresh_klines(coin, '1h', lookback)
+        if df is not None and len(df) >= 30:
+            result['data_source'] = 'LIVE'
+        else:
+            df = self.load_data(coin)
+            if df is not None and len(df) >= 30:
+                df = df.tail(min(lookback, len(df)))
+                result['data_source'] = 'CSV'
+            else:
+                result['analysis'] = 'Insufficient data for volume profile'
+                return result
+
+        df_vp = df
+        # Use live price if provided, otherwise use last close
+        current_price = live_price if live_price > 0 else float(df_vp['close'].iloc[-1])
+        result['current_price'] = current_price
+
+        try:
+            price_min = float(df_vp['low'].min())
+            price_max = float(df_vp['high'].max())
+            price_range = price_max - price_min
+
+            if price_range <= 0:
+                result['analysis'] = 'No price range for volume profile'
+                return result
+
+            # Create price bins
+            bin_size = price_range / num_levels
+            bins = []
+            for i in range(num_levels):
+                bin_low = price_min + (i * bin_size)
+                bin_high = bin_low + bin_size
+                bin_mid = (bin_low + bin_high) / 2
+                bins.append({
+                    'low': bin_low,
+                    'high': bin_high,
+                    'mid': bin_mid,
+                    'volume': 0.0
+                })
+
+            # Distribute volume across price bins
+            # For each candle, spread its volume across the bins it touches
+            for _, row in df_vp.iterrows():
+                candle_low = float(row['low'])
+                candle_high = float(row['high'])
+                candle_vol = float(row['volume'])
+
+                for b in bins:
+                    # Calculate overlap between candle range and bin range
+                    overlap_low = max(candle_low, b['low'])
+                    overlap_high = min(candle_high, b['high'])
+                    if overlap_high > overlap_low:
+                        candle_range = candle_high - candle_low
+                        if candle_range > 0:
+                            overlap_pct = (overlap_high - overlap_low) / candle_range
+                            b['volume'] += candle_vol * overlap_pct
+                        else:
+                            # Doji candle - all volume at one price
+                            b['volume'] += candle_vol
+
+            # Calculate total volume and percentages
+            total_vol = sum(b['volume'] for b in bins)
+            if total_vol <= 0:
+                result['analysis'] = 'No volume data for profile'
+                return result
+
+            # Find POC (bin with highest volume)
+            poc_bin = max(bins, key=lambda b: b['volume'])
+            result['poc'] = {
+                'price': round(poc_bin['mid'], 8),
+                'volume': round(poc_bin['volume'], 2),
+                'volume_pct': round((poc_bin['volume'] / total_vol) * 100, 1)
+            }
+
+            # Build levels list with volume percentages
+            max_vol = poc_bin['volume']
+            for b in bins:
+                vol_pct = (b['volume'] / total_vol) * 100
+                vol_relative = (b['volume'] / max_vol) * 100 if max_vol > 0 else 0
+                result['levels'].append({
+                    'price': round(b['mid'], 8),
+                    'price_low': round(b['low'], 8),
+                    'price_high': round(b['high'], 8),
+                    'volume': round(b['volume'], 2),
+                    'volume_pct': round(vol_pct, 1),
+                    'volume_relative': round(vol_relative, 1),
+                    'is_poc': b is poc_bin
+                })
+
+            # Calculate Value Area (70% of volume around POC)
+            sorted_bins = sorted(bins, key=lambda b: b['volume'], reverse=True)
+            va_vol = 0
+            va_target = total_vol * 0.7
+            va_bins = []
+            for b in sorted_bins:
+                va_vol += b['volume']
+                va_bins.append(b)
+                if va_vol >= va_target:
+                    break
+
+            va_prices = [b['mid'] for b in va_bins]
+            result['value_area_high'] = round(max(b['high'] for b in va_bins), 8)
+            result['value_area_low'] = round(min(b['low'] for b in va_bins), 8)
+
+            # Identify HVN (High Volume Nodes) and LVN (Low Volume Nodes)
+            avg_vol = total_vol / num_levels
+            for b in bins:
+                level_info = {
+                    'price': round(b['mid'], 8),
+                    'volume_pct': round((b['volume'] / total_vol) * 100, 1)
+                }
+                if b['volume'] > avg_vol * 1.5:
+                    result['hvn'].append(level_info)
+                elif b['volume'] < avg_vol * 0.5 and b['volume'] > 0:
+                    result['lvn'].append(level_info)
+
+            # Sort HVN/LVN by price
+            result['hvn'].sort(key=lambda x: x['price'])
+            result['lvn'].sort(key=lambda x: x['price'])
+
+            # Price position relative to POC
+            poc_price = poc_bin['mid']
+            pct_from_poc = ((current_price - poc_price) / poc_price) * 100
+            if pct_from_poc > 2:
+                result['price_vs_poc'] = 'ABOVE_POC'
+            elif pct_from_poc < -2:
+                result['price_vs_poc'] = 'BELOW_POC'
+            else:
+                result['price_vs_poc'] = 'AT_POC'
+
+            # Build analysis text
+            hvn_near = [h for h in result['hvn'] if abs(h['price'] - current_price) / current_price < 0.03]
+            lvn_near = [l for l in result['lvn'] if abs(l['price'] - current_price) / current_price < 0.03]
+
+            analysis_parts = []
+            analysis_parts.append(f"POC at {formatPrice(poc_price)} ({result['poc']['volume_pct']}% of volume)")
+            analysis_parts.append(f"Value Area: {formatPrice(result['value_area_low'])} - {formatPrice(result['value_area_high'])}")
+
+            if result['price_vs_poc'] == 'ABOVE_POC':
+                analysis_parts.append('Price ABOVE POC - trading at premium')
+            elif result['price_vs_poc'] == 'BELOW_POC':
+                analysis_parts.append('Price BELOW POC - trading at discount')
+            else:
+                analysis_parts.append('Price AT POC - at fair value')
+
+            if hvn_near:
+                analysis_parts.append(f'{len(hvn_near)} support/resistance node(s) nearby')
+            if lvn_near:
+                analysis_parts.append(f'{len(lvn_near)} low-volume gap(s) nearby - fast moves possible')
+
+            result['analysis'] = '. '.join(analysis_parts)
+
+        except Exception as e:
+            print(f"Volume profile error for {coin}: {e}")
+            result['analysis'] = 'Error calculating volume profile'
+
+        return result
+
+    def get_volume_analysis(self, coin: str, live_price: float = 0) -> Dict:
+        """Calculate real-time volume indicators from raw 1h data"""
+        result = {
+            'obv': {
+                'current': 0,
+                'trend': 'NEUTRAL',
+                'divergence': None
+            },
+            'mfi': {
+                'value': 50.0,
+                'zone': 'NEUTRAL',
+                'interpretation': ''
+            },
+            'buy_sell_delta': {
+                'delta_pct': 0.0,
+                'pressure': 'NEUTRAL',
+                'delta_24h': 0.0,
+                'strength': 'WEAK'
+            },
+            'volume_spikes': {
+                'current_ratio': 1.0,
+                'is_spike': False,
+                'spike_count_24h': 0,
+                'interpretation': ''
+            },
+            'force_index': {
+                'value': 0.0,
+                'trend': 'NEUTRAL'
+            },
+            'volume_profile': {},
+            'overall_signal': 'NEUTRAL',
+            'summary': ''
+        }
+
+        df = self.load_data(coin)
+        if df is None or len(df) < 30:
+            result['summary'] = 'Insufficient data for volume analysis'
+            return result
+
+        close = df['close']
+        high = df['high']
+        low = df['low']
+        volume = df['volume']
+
+        try:
+            # --- OBV ---
+            obv_series = OnBalanceVolumeIndicator(close, volume).on_balance_volume()
+            obv_current = float(obv_series.iloc[-1])
+            obv_prev_24 = float(obv_series.iloc[-24]) if len(obv_series) >= 24 else float(obv_series.iloc[0])
+            result['obv']['current'] = round(obv_current, 2)
+
+            if obv_current > obv_prev_24 * 1.02:
+                result['obv']['trend'] = 'ACCUMULATION'
+            elif obv_current < obv_prev_24 * 0.98:
+                result['obv']['trend'] = 'DISTRIBUTION'
+
+            # OBV divergence: price vs OBV direction mismatch
+            if len(close) >= 24:
+                price_change = (float(close.iloc[-1]) - float(close.iloc[-24])) / float(close.iloc[-24])
+                obv_change = (obv_current - obv_prev_24) / abs(obv_prev_24) if obv_prev_24 != 0 else 0
+                if price_change < -0.01 and obv_change > 0.02:
+                    result['obv']['divergence'] = 'BULLISH_DIVERGENCE'
+                elif price_change > 0.01 and obv_change < -0.02:
+                    result['obv']['divergence'] = 'BEARISH_DIVERGENCE'
+
+            # --- MFI ---
+            mfi_value = MFIIndicator(high, low, close, volume, window=14).money_flow_index().iloc[-1]
+            if pd.notna(mfi_value):
+                result['mfi']['value'] = round(float(mfi_value), 1)
+                if mfi_value >= 80:
+                    result['mfi']['zone'] = 'OVERBOUGHT'
+                    result['mfi']['interpretation'] = 'Overbought - potential reversal or pullback ahead'
+                elif mfi_value <= 20:
+                    result['mfi']['zone'] = 'OVERSOLD'
+                    result['mfi']['interpretation'] = 'Oversold - potential bounce or reversal ahead'
+                else:
+                    result['mfi']['zone'] = 'NEUTRAL'
+                    result['mfi']['interpretation'] = 'Normal money flow - no extreme detected'
+
+            # --- Buy/Sell Volume Delta ---
+            df_recent = df.tail(24)
+            buy_vol = float(df_recent.loc[df_recent['close'] >= df_recent['open'], 'volume'].sum())
+            sell_vol = float(df_recent.loc[df_recent['close'] < df_recent['open'], 'volume'].sum())
+            total_vol = buy_vol + sell_vol
+            if total_vol > 0:
+                delta_pct = ((buy_vol - sell_vol) / total_vol) * 100
+                result['buy_sell_delta']['delta_pct'] = round(delta_pct, 1)
+                result['buy_sell_delta']['delta_24h'] = round(buy_vol - sell_vol, 2)
+                if delta_pct > 20:
+                    result['buy_sell_delta']['pressure'] = 'BUYING'
+                    result['buy_sell_delta']['strength'] = 'STRONG' if delta_pct > 40 else 'MODERATE'
+                elif delta_pct < -20:
+                    result['buy_sell_delta']['pressure'] = 'SELLING'
+                    result['buy_sell_delta']['strength'] = 'STRONG' if delta_pct < -40 else 'MODERATE'
+
+            # --- Volume Spikes ---
+            vol_ma_20 = volume.rolling(20).mean()
+            if pd.notna(vol_ma_20.iloc[-1]) and vol_ma_20.iloc[-1] > 0:
+                current_ratio = float(volume.iloc[-1]) / float(vol_ma_20.iloc[-1])
+                result['volume_spikes']['current_ratio'] = round(current_ratio, 2)
+                result['volume_spikes']['is_spike'] = bool(current_ratio > 2.0)
+                if len(volume) >= 24:
+                    ratios_24 = (volume.tail(24) / vol_ma_20.tail(24)).fillna(1)
+                    result['volume_spikes']['spike_count_24h'] = int((ratios_24 > 2.0).sum())
+                if current_ratio > 3.0:
+                    result['volume_spikes']['interpretation'] = 'Extreme volume spike - significant market event'
+                elif current_ratio > 2.0:
+                    result['volume_spikes']['interpretation'] = 'Volume spike detected - increased market interest'
+                elif current_ratio < 0.5:
+                    result['volume_spikes']['interpretation'] = 'Very low volume - lack of conviction'
+                else:
+                    result['volume_spikes']['interpretation'] = 'Normal volume levels'
+
+            # --- Force Index ---
+            fi_value = ForceIndexIndicator(close, volume, window=13).force_index().iloc[-1]
+            if pd.notna(fi_value):
+                result['force_index']['value'] = round(float(fi_value), 2)
+                result['force_index']['trend'] = 'BULLISH' if fi_value > 0 else 'BEARISH'
+
+            # --- Volume Profile ---
+            result['volume_profile'] = self.get_volume_profile(coin, live_price=live_price)
+
+            # --- Overall Signal ---
+            bullish = 0
+            bearish = 0
+            if result['obv']['trend'] == 'ACCUMULATION': bullish += 1
+            elif result['obv']['trend'] == 'DISTRIBUTION': bearish += 1
+            if result['mfi']['zone'] == 'OVERSOLD': bullish += 1
+            elif result['mfi']['zone'] == 'OVERBOUGHT': bearish += 1
+            if result['buy_sell_delta']['pressure'] == 'BUYING': bullish += 1
+            elif result['buy_sell_delta']['pressure'] == 'SELLING': bearish += 1
+            if result['force_index']['trend'] == 'BULLISH': bullish += 1
+            elif result['force_index']['trend'] == 'BEARISH': bearish += 1
+            if result['obv']['divergence'] == 'BULLISH_DIVERGENCE': bullish += 1
+            elif result['obv']['divergence'] == 'BEARISH_DIVERGENCE': bearish += 1
+
+            if bullish >= 3:
+                result['overall_signal'] = 'BULLISH'
+                result['summary'] = f'Volume indicators predominantly bullish ({bullish}/5 bullish signals)'
+            elif bearish >= 3:
+                result['overall_signal'] = 'BEARISH'
+                result['summary'] = f'Volume indicators predominantly bearish ({bearish}/5 bearish signals)'
+            else:
+                result['overall_signal'] = 'NEUTRAL'
+                result['summary'] = f'Volume indicators mixed ({bullish} bullish, {bearish} bearish)'
+
+        except Exception as e:
+            print(f"Volume analysis error for {coin}: {e}")
+            result['summary'] = f'Error calculating volume indicators'
+
+        return result
+
     def get_model_probabilities(self, coin: str) -> Dict:
         """Get WIN/LOSS/SIDEWAYS probabilities from model"""
         if coin not in self.models:
@@ -985,7 +1752,10 @@ class TradingEngine:
         
         # Get market regime
         regime = self.get_market_regime(coin)
-        
+
+        # Get volume analysis (pass live price for accurate volume profile)
+        volume_analysis = self.get_volume_analysis(coin, live_price=price)
+
         # Get model probabilities
         probs = self.get_model_probabilities(coin)
         
@@ -1248,7 +2018,10 @@ class TradingEngine:
                 'btc': btc,
                 'regime': regime
             },
-            
+
+            # Volume analysis
+            'volume_analysis': volume_analysis,
+
             # Scenarios (simplified)
             'active_scenarios': [
                 {
@@ -1330,7 +2103,14 @@ engine = TradingEngine()
 
 @app.on_event("startup")
 async def startup_event():
-    """Start price streaming on startup"""
+    """Start price streaming and AI service on startup"""
+    global ai_service
+    print("\n" + "=" * 60)
+    print("  Crypto AI Trading API v6.0")
+    print("=" * 60)
+    print("  AI Providers:")
+    ai_service = AIService()
+    print("=" * 60 + "\n")
     asyncio.create_task(price_streamer.start(engine.coins))
 
 @app.on_event("shutdown")
@@ -1414,6 +2194,133 @@ async def analyze(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+async def _gather_news_data() -> Dict:
+    """Helper to gather news data for AI analysis"""
+    try:
+        crypto_news = await news_service.fetch_crypto_news()
+        geo_news = await news_service.fetch_geopolitical_news()
+        sentiment = await news_service.get_market_sentiment_summary()
+        return {
+            'crypto_news': crypto_news,
+            'geopolitical_news': geo_news,
+            'market_sentiment': sentiment
+        }
+    except Exception:
+        return {}
+
+@app.get("/ai-analysis/{coin}")
+async def ai_analysis(
+    coin: str,
+    capital: float = 1000,
+    trade_type: str = "SWING",
+    experience: str = "INTERMEDIATE",
+    reason: Optional[str] = None,
+    recent_losses: int = 0,
+    trades_today: int = 0,
+    entry_price: Optional[float] = None
+):
+    """Get AI-powered analysis for a coin (Groq FREE -> OpenAI fallback)"""
+    global ai_service
+    if ai_service is None:
+        ai_service = AIService()
+
+    if not ai_service.groq_available and not ai_service.openai_available:
+        raise HTTPException(
+            status_code=503,
+            detail="No AI provider configured. Set GROQ_API_KEY or OPENAI_API_KEY in .env file."
+        )
+
+    try:
+        # First run the standard analysis to get technical data
+        trade_type_upper = trade_type.upper()
+        if trade_type_upper not in ['SCALP', 'SHORT_TERM', 'SWING', 'INVESTMENT']:
+            trade_type_upper = 'SWING'
+
+        experience_upper = experience.upper()
+        if experience_upper not in ['BEGINNER', 'INTERMEDIATE', 'ADVANCED']:
+            experience_upper = 'INTERMEDIATE'
+
+        reason_enum = None
+        if reason:
+            reason_upper = reason.upper()
+            if reason_upper in ['STRATEGY', 'FOMO', 'NEWS', 'TIP', 'DIP_BUY']:
+                reason_enum = TradeReason(reason_upper)
+
+        request = AnalyzeRequest(
+            coin=coin,
+            capital=capital,
+            trade_type=TradeType(trade_type_upper),
+            experience=ExperienceLevel(experience_upper),
+            reason=reason_enum,
+            recent_losses=recent_losses,
+            trades_today=trades_today,
+            entry_price=entry_price
+        )
+        analysis_data = engine.analyze(request)
+
+        # Fetch market sentiment and news in parallel for richer AI context
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+
+        market_sentiment = None
+        news_data = None
+        derivatives_data = None
+        whale_data = None
+        try:
+            import asyncio as _aio
+            sentiment_task = market_data_service.get_market_sentiment(coin_upper)
+            news_task = _gather_news_data()
+            derivatives_task = market_data_service.get_derivatives_intelligence(coin_upper)
+            whale_task = market_data_service.get_whale_activity(coin_upper)
+            results = await _aio.gather(sentiment_task, news_task, derivatives_task, whale_task, return_exceptions=True)
+            if not isinstance(results[0], Exception):
+                market_sentiment = results[0]
+            if not isinstance(results[1], Exception):
+                news_data = results[1]
+            if not isinstance(results[2], Exception):
+                derivatives_data = results[2]
+            if not isinstance(results[3], Exception):
+                whale_data = results[3]
+        except Exception as e:
+            print(f"  Warning: Could not fetch sentiment/news/derivatives for AI: {e}")
+
+        # Get AI insights with full context
+        ai_result = await ai_service.get_ai_analysis(coin_upper, analysis_data, market_sentiment, news_data, derivatives_data, whale_data)
+
+        return {
+            'coin': coin_upper,
+            'timestamp': datetime.now().isoformat(),
+            'ai_analysis': ai_result,
+            'technical_summary': {
+                'verdict': analysis_data.get('verdict'),
+                'win_probability': analysis_data.get('win_probability'),
+                'loss_probability': analysis_data.get('loss_probability'),
+                'expectancy': analysis_data.get('expectancy'),
+                'price': analysis_data.get('price')
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"  AI analysis error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/ai-status")
+async def ai_status():
+    """Check AI provider status"""
+    global ai_service
+    if ai_service is None:
+        ai_service = AIService()
+    return {
+        'groq_available': ai_service.groq_available,
+        'openai_available': ai_service.openai_available,
+        'primary_provider': 'Groq (FREE)' if ai_service.groq_available else 'OpenAI' if ai_service.openai_available else 'None',
+        'any_available': ai_service.groq_available or ai_service.openai_available
+    }
 
 @app.get("/config/trade-types")
 async def get_trade_types():
@@ -1697,6 +2604,651 @@ class NewsService:
 news_service = NewsService()
 
 # ============================================================
+# MARKET DATA SERVICE (Fear & Greed, Funding, Open Interest)
+# ============================================================
+
+class MarketDataService:
+    """Service for fetching on-chain and market sentiment data"""
+
+    def __init__(self):
+        self.cache: Dict[str, Any] = {}
+        self.cache_duration = 300  # 5 minutes
+        self.last_fetch: Dict[str, float] = {}
+
+    def _is_cached(self, key: str) -> bool:
+        now = datetime.now().timestamp()
+        return (key in self.cache and key in self.last_fetch
+                and now - self.last_fetch[key] < self.cache_duration)
+
+    def _set_cache(self, key: str, data: Any):
+        self.cache[key] = data
+        self.last_fetch[key] = datetime.now().timestamp()
+
+    async def get_fear_greed_index(self) -> Dict:
+        """Fetch Fear & Greed Index from alternative.me (free, no auth)"""
+        cache_key = 'fear_greed'
+        if self._is_cached(cache_key):
+            return self.cache[cache_key]
+
+        result = {
+            'value': 50, 'label': 'Neutral', 'timestamp': None,
+            'previous_value': None, 'previous_label': None,
+            'trend': 'STABLE', 'source': 'alternative.me'
+        }
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    'https://api.alternative.me/fng/?limit=2&format=json',
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        entries = data.get('data', [])
+                        if entries:
+                            current = entries[0]
+                            result['value'] = int(current['value'])
+                            result['label'] = current['value_classification']
+                            result['timestamp'] = current.get('timestamp')
+                            if len(entries) > 1:
+                                prev = entries[1]
+                                result['previous_value'] = int(prev['value'])
+                                result['previous_label'] = prev['value_classification']
+                                diff = result['value'] - result['previous_value']
+                                result['trend'] = 'IMPROVING' if diff > 5 else 'WORSENING' if diff < -5 else 'STABLE'
+        except Exception as e:
+            print(f"Fear & Greed API error: {e}")
+
+        self._set_cache(cache_key, result)
+        return result
+
+    async def get_funding_rate(self, coin: str) -> Dict:
+        """Fetch funding rate from Binance Futures (free, no auth)"""
+        symbol = coin.replace('_', '')
+        cache_key = f'funding_{symbol}'
+        if self._is_cached(cache_key):
+            return self.cache[cache_key]
+
+        result = {
+            'symbol': symbol, 'funding_rate': 0.0, 'funding_rate_pct': 0.0,
+            'sentiment': 'NEUTRAL', 'interpretation': '', 'source': 'Binance Futures'
+        }
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f'https://fapi.binance.com/fapi/v1/fundingRate?symbol={symbol}&limit=1',
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data:
+                            rate = float(data[0]['fundingRate'])
+                            result['funding_rate'] = round(rate, 6)
+                            result['funding_rate_pct'] = round(rate * 100, 4)
+                            if rate > 0.001:
+                                result['sentiment'] = 'EXTREME_GREED'
+                                result['interpretation'] = 'Very high funding - longs paying shorts heavily'
+                            elif rate > 0.0003:
+                                result['sentiment'] = 'BULLISH'
+                                result['interpretation'] = 'Positive funding - market leaning long'
+                            elif rate < -0.001:
+                                result['sentiment'] = 'EXTREME_FEAR'
+                                result['interpretation'] = 'Very negative funding - shorts paying longs'
+                            elif rate < -0.0003:
+                                result['sentiment'] = 'BEARISH'
+                                result['interpretation'] = 'Negative funding - market leaning short'
+                            else:
+                                result['interpretation'] = 'Neutral funding rate - balanced market'
+        except Exception as e:
+            print(f"Funding rate API error for {symbol}: {e}")
+
+        self._set_cache(cache_key, result)
+        return result
+
+    async def get_open_interest(self, coin: str) -> Dict:
+        """Fetch open interest from Binance Futures (free, no auth)"""
+        symbol = coin.replace('_', '')
+        cache_key = f'oi_{symbol}'
+        if self._is_cached(cache_key):
+            return self.cache[cache_key]
+
+        result = {
+            'symbol': symbol, 'open_interest': 0.0,
+            'open_interest_usd': 0.0, 'source': 'Binance Futures'
+        }
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f'https://fapi.binance.com/fapi/v1/openInterest?symbol={symbol}',
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        oi = float(data.get('openInterest', 0))
+                        result['open_interest'] = round(oi, 4)
+                        async with session.get(
+                            f'https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}',
+                            timeout=aiohttp.ClientTimeout(total=10)
+                        ) as price_resp:
+                            if price_resp.status == 200:
+                                price_data = await price_resp.json()
+                                mark_price = float(price_data.get('price', 0))
+                                result['open_interest_usd'] = round(oi * mark_price, 2)
+        except Exception as e:
+            print(f"Open interest API error for {symbol}: {e}")
+
+        self._set_cache(cache_key, result)
+        return result
+
+    async def get_long_short_ratio(self, coin: str) -> Dict:
+        """Fetch Long/Short ratio for top traders + global accounts from Binance Futures"""
+        symbol = coin.replace('_', '')
+        cache_key = f'ls_ratio_{symbol}'
+        if self._is_cached(cache_key):
+            return self.cache[cache_key]
+
+        result = {
+            'top_traders': {'long_pct': 50.0, 'short_pct': 50.0, 'ratio': 1.0, 'trend': 'STABLE'},
+            'global': {'long_pct': 50.0, 'short_pct': 50.0, 'ratio': 1.0, 'trend': 'STABLE'},
+            'signal': 'NEUTRAL',
+            'source': 'Binance Futures'
+        }
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                # Top traders long/short ratio
+                async with session.get(
+                    f'https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol={symbol}&period=1h&limit=6',
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data and len(data) > 0:
+                            latest = data[-1]
+                            long_pct = float(latest.get('longAccount', 0.5)) * 100
+                            short_pct = float(latest.get('shortAccount', 0.5)) * 100
+                            ratio = float(latest.get('longShortRatio', 1.0))
+                            result['top_traders'] = {
+                                'long_pct': round(long_pct, 1),
+                                'short_pct': round(short_pct, 1),
+                                'ratio': round(ratio, 3),
+                                'trend': 'STABLE'
+                            }
+                            if len(data) >= 2:
+                                old_ratio = float(data[0].get('longShortRatio', 1.0))
+                                diff = ratio - old_ratio
+                                if diff > 0.05:
+                                    result['top_traders']['trend'] = 'LONGS_INCREASING'
+                                elif diff < -0.05:
+                                    result['top_traders']['trend'] = 'SHORTS_INCREASING'
+
+                # Global accounts long/short ratio
+                async with session.get(
+                    f'https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol={symbol}&period=1h&limit=6',
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data and len(data) > 0:
+                            latest = data[-1]
+                            long_pct = float(latest.get('longAccount', 0.5)) * 100
+                            short_pct = float(latest.get('shortAccount', 0.5)) * 100
+                            ratio = float(latest.get('longShortRatio', 1.0))
+                            result['global'] = {
+                                'long_pct': round(long_pct, 1),
+                                'short_pct': round(short_pct, 1),
+                                'ratio': round(ratio, 3),
+                                'trend': 'STABLE'
+                            }
+                            if len(data) >= 2:
+                                old_ratio = float(data[0].get('longShortRatio', 1.0))
+                                diff = ratio - old_ratio
+                                if diff > 0.05:
+                                    result['global']['trend'] = 'LONGS_INCREASING'
+                                elif diff < -0.05:
+                                    result['global']['trend'] = 'SHORTS_INCREASING'
+
+            # Smart money signal: top traders vs crowd divergence
+            top_long = result['top_traders']['long_pct']
+            global_long = result['global']['long_pct']
+            if top_long > 55 and global_long < 45:
+                result['signal'] = 'SMART_MONEY_LONG'
+            elif top_long < 45 and global_long > 55:
+                result['signal'] = 'SMART_MONEY_SHORT'
+            elif top_long > 55:
+                result['signal'] = 'CONSENSUS_LONG'
+            elif top_long < 45:
+                result['signal'] = 'CONSENSUS_SHORT'
+
+        except Exception as e:
+            print(f"Long/Short ratio API error for {symbol}: {e}")
+
+        self._set_cache(cache_key, result)
+        return result
+
+    async def get_taker_volume(self, coin: str) -> Dict:
+        """Fetch taker buy/sell volume ratio from Binance Futures"""
+        symbol = coin.replace('_', '')
+        cache_key = f'taker_{symbol}'
+        if self._is_cached(cache_key):
+            return self.cache[cache_key]
+
+        result = {
+            'buy_vol': 0.0, 'sell_vol': 0.0, 'ratio': 1.0,
+            'pressure': 'BALANCED', 'trend': 'STABLE',
+            'source': 'Binance Futures'
+        }
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f'https://fapi.binance.com/futures/data/takerlongshortRatio?symbol={symbol}&period=1h&limit=6',
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data and len(data) > 0:
+                            latest = data[-1]
+                            buy_vol = float(latest.get('buyVol', 0))
+                            sell_vol = float(latest.get('sellVol', 0))
+                            ratio = float(latest.get('buySellRatio', 1.0))
+                            result['buy_vol'] = round(buy_vol, 2)
+                            result['sell_vol'] = round(sell_vol, 2)
+                            result['ratio'] = round(ratio, 3)
+
+                            if ratio > 1.15:
+                                result['pressure'] = 'STRONG_BUYERS'
+                            elif ratio > 1.05:
+                                result['pressure'] = 'BUYERS'
+                            elif ratio < 0.85:
+                                result['pressure'] = 'STRONG_SELLERS'
+                            elif ratio < 0.95:
+                                result['pressure'] = 'SELLERS'
+
+                            if len(data) >= 2:
+                                old_ratio = float(data[0].get('buySellRatio', 1.0))
+                                diff = ratio - old_ratio
+                                if diff > 0.05:
+                                    result['trend'] = 'BUYERS_INCREASING'
+                                elif diff < -0.05:
+                                    result['trend'] = 'SELLERS_INCREASING'
+        except Exception as e:
+            print(f"Taker volume API error for {symbol}: {e}")
+
+        self._set_cache(cache_key, result)
+        return result
+
+    async def get_order_book_depth(self, coin: str) -> Dict:
+        """Fetch order book depth from Binance spot API"""
+        symbol = coin.replace('_', '')
+        cache_key = f'orderbook_{symbol}'
+        # Shorter cache for order book (2 min)
+        if cache_key in self.cache and cache_key in self.last_fetch:
+            if datetime.now().timestamp() - self.last_fetch[cache_key] < 120:
+                return self.cache[cache_key]
+
+        result = {
+            'total_bid_usd': 0.0, 'total_ask_usd': 0.0,
+            'bid_ask_ratio': 1.0, 'imbalance': 'BALANCED',
+            'strongest_bid': {'price': 0, 'size_usd': 0},
+            'strongest_ask': {'price': 0, 'size_usd': 0},
+            'support_level': 0.0, 'resistance_level': 0.0,
+            'source': 'Binance'
+        }
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f'https://api.binance.com/api/v3/depth?symbol={symbol}&limit=20',
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        bids = data.get('bids', [])
+                        asks = data.get('asks', [])
+
+                        total_bid_usd = 0.0
+                        max_bid_usd = 0.0
+                        max_bid_price = 0.0
+                        for bid in bids:
+                            price = float(bid[0])
+                            qty = float(bid[1])
+                            usd = price * qty
+                            total_bid_usd += usd
+                            if usd > max_bid_usd:
+                                max_bid_usd = usd
+                                max_bid_price = price
+
+                        total_ask_usd = 0.0
+                        max_ask_usd = 0.0
+                        max_ask_price = 0.0
+                        for ask in asks:
+                            price = float(ask[0])
+                            qty = float(ask[1])
+                            usd = price * qty
+                            total_ask_usd += usd
+                            if usd > max_ask_usd:
+                                max_ask_usd = usd
+                                max_ask_price = price
+
+                        result['total_bid_usd'] = round(total_bid_usd, 2)
+                        result['total_ask_usd'] = round(total_ask_usd, 2)
+                        ratio = total_bid_usd / total_ask_usd if total_ask_usd > 0 else 1.0
+                        result['bid_ask_ratio'] = round(ratio, 3)
+
+                        if ratio > 1.3:
+                            result['imbalance'] = 'STRONG_BID'
+                        elif ratio > 1.1:
+                            result['imbalance'] = 'BID_HEAVY'
+                        elif ratio < 0.7:
+                            result['imbalance'] = 'STRONG_ASK'
+                        elif ratio < 0.9:
+                            result['imbalance'] = 'ASK_HEAVY'
+
+                        result['strongest_bid'] = {'price': max_bid_price, 'size_usd': round(max_bid_usd, 2)}
+                        result['strongest_ask'] = {'price': max_ask_price, 'size_usd': round(max_ask_usd, 2)}
+                        result['support_level'] = max_bid_price
+                        result['resistance_level'] = max_ask_price
+
+        except Exception as e:
+            print(f"Order book API error for {symbol}: {e}")
+
+        self._set_cache(cache_key, result)
+        return result
+
+    async def get_liquidation_estimates(self, coin: str) -> Dict:
+        """Estimate liquidation levels from OI + price + common leverage levels"""
+        symbol = coin.replace('_', '')
+        cache_key = f'liq_{symbol}'
+        if self._is_cached(cache_key):
+            return self.cache[cache_key]
+
+        result = {
+            'long_liq_levels': [],
+            'short_liq_levels': [],
+            'recent_signal': 'NONE',
+            'oi_change_pct': 0.0,
+            'nearest_long_liq': None,
+            'nearest_short_liq': None,
+            'source': 'Estimated from OI + Leverage'
+        }
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                # Get current price
+                current_price = 0.0
+                async with session.get(
+                    f'https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}',
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        current_price = float(data.get('price', 0))
+
+                if current_price <= 0:
+                    self._set_cache(cache_key, result)
+                    return result
+
+                # Calculate liquidation levels for common leverage
+                leverages = [5, 10, 25, 50, 100]
+                for lev in leverages:
+                    # Long liquidation: price drops by (1/leverage) * 100%
+                    long_liq = current_price * (1 - 1 / lev)
+                    dist_pct = (1 / lev) * 100
+                    result['long_liq_levels'].append({
+                        'leverage': f'{lev}x',
+                        'price': round(long_liq, 8),
+                        'distance_pct': round(dist_pct, 1)
+                    })
+
+                    # Short liquidation: price rises by (1/leverage) * 100%
+                    short_liq = current_price * (1 + 1 / lev)
+                    result['short_liq_levels'].append({
+                        'leverage': f'{lev}x',
+                        'price': round(short_liq, 8),
+                        'distance_pct': round(dist_pct, 1)
+                    })
+
+                result['nearest_long_liq'] = result['long_liq_levels'][-1]  # 100x = closest
+                result['nearest_short_liq'] = result['short_liq_levels'][-1]  # 100x = closest
+
+                # Check OI history for recent liquidation signals
+                async with session.get(
+                    f'https://fapi.binance.com/futures/data/openInterestHist?symbol={symbol}&period=1h&limit=24',
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data and len(data) >= 2:
+                            latest_oi = float(data[-1].get('sumOpenInterest', 0))
+                            oldest_oi = float(data[0].get('sumOpenInterest', 0))
+                            if oldest_oi > 0:
+                                oi_change = ((latest_oi - oldest_oi) / oldest_oi) * 100
+                                result['oi_change_pct'] = round(oi_change, 2)
+
+                                # Large OI drops suggest liquidations
+                                if oi_change < -5:
+                                    # Check price direction to determine which side got liquidated
+                                    latest_price = current_price
+                                    # If OI dropped significantly, check recent price move
+                                    result['recent_signal'] = 'LONG_SQUEEZE' if oi_change < -10 else 'POSSIBLE_LIQUIDATIONS'
+                                elif oi_change > 10:
+                                    result['recent_signal'] = 'NEW_POSITIONS_OPENING'
+
+        except Exception as e:
+            print(f"Liquidation estimates error for {symbol}: {e}")
+
+        self._set_cache(cache_key, result)
+        return result
+
+    async def get_whale_activity(self, coin: str) -> Dict:
+        """Detect large transactions / whale activity"""
+        symbol = coin.replace('_', '')
+        cache_key = f'whale_{symbol}'
+        # 10 min cache for whale data (Blockchair rate limits)
+        if cache_key in self.cache and cache_key in self.last_fetch:
+            if datetime.now().timestamp() - self.last_fetch[cache_key] < 600:
+                return self.cache[cache_key]
+
+        result = {
+            'recent_large_txs': [],
+            'whale_signal': 'NEUTRAL',
+            'large_trade_count': 0,
+            'avg_large_trade_size': 0.0,
+            'alert': None,
+            'source': 'Binance Trades'
+        }
+
+        try:
+            import aiohttp
+            base_coin = coin.split('_')[0].upper()
+
+            if base_coin == 'BTC':
+                # Blockchair for BTC whale txs (>100 BTC ≈ 10B satoshis)
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        'https://api.blockchair.com/bitcoin/transactions?q=output_total(10000000000..)&limit=5&s=time(desc)',
+                        timeout=aiohttp.ClientTimeout(total=15)
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            txs = data.get('data', [])
+                            for tx in txs[:5]:
+                                btc_val = tx.get('output_total', 0) / 1e8
+                                result['recent_large_txs'].append({
+                                    'hash': tx.get('hash', '')[:16] + '...',
+                                    'value': round(btc_val, 2),
+                                    'value_display': f'{btc_val:,.2f} BTC',
+                                    'time': tx.get('time', ''),
+                                    'block': tx.get('block_id', 0)
+                                })
+                            result['source'] = 'Blockchair'
+                            if len(txs) >= 3:
+                                result['whale_signal'] = 'ACTIVE'
+                                result['alert'] = f'{len(txs)} large BTC transactions detected recently'
+
+            elif base_coin == 'ETH':
+                # Blockchair for ETH whale txs (>1000 ETH)
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        'https://api.blockchair.com/ethereum/transactions?q=value(1000000000000000000000..)&limit=5&s=time(desc)',
+                        timeout=aiohttp.ClientTimeout(total=15)
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            txs = data.get('data', [])
+                            for tx in txs[:5]:
+                                eth_val = float(tx.get('value', 0)) / 1e18
+                                result['recent_large_txs'].append({
+                                    'hash': tx.get('hash', '')[:16] + '...',
+                                    'value': round(eth_val, 2),
+                                    'value_display': f'{eth_val:,.2f} ETH',
+                                    'time': tx.get('time', ''),
+                                    'block': tx.get('block_id', 0)
+                                })
+                            result['source'] = 'Blockchair'
+                            if len(txs) >= 3:
+                                result['whale_signal'] = 'ACTIVE'
+                                result['alert'] = f'{len(txs)} large ETH transactions detected recently'
+
+            else:
+                # For SOL, PEPE etc: use Binance recent trades to find outliers
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f'https://api.binance.com/api/v3/trades?symbol={symbol}&limit=50',
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as resp:
+                        if resp.status == 200:
+                            trades = await resp.json()
+                            if trades:
+                                sizes = [float(t['quoteQty']) for t in trades]
+                                if sizes:
+                                    import numpy as np
+                                    threshold = np.percentile(sizes, 95)
+                                    large_trades = [t for t in trades if float(t['quoteQty']) > threshold]
+                                    result['large_trade_count'] = len(large_trades)
+                                    if large_trades:
+                                        avg_size = sum(float(t['quoteQty']) for t in large_trades) / len(large_trades)
+                                        result['avg_large_trade_size'] = round(avg_size, 2)
+
+                                        buy_trades = sum(1 for t in large_trades if not t.get('isBuyerMaker', True))
+                                        sell_trades = len(large_trades) - buy_trades
+
+                                        for t in large_trades[:5]:
+                                            usd_val = float(t['quoteQty'])
+                                            result['recent_large_txs'].append({
+                                                'value': round(usd_val, 2),
+                                                'value_display': f'${usd_val:,.0f}',
+                                                'time': datetime.utcfromtimestamp(t['time'] / 1000).strftime('%H:%M:%S'),
+                                                'type': 'BUY' if not t.get('isBuyerMaker', True) else 'SELL'
+                                            })
+
+                                        if buy_trades > sell_trades * 2:
+                                            result['whale_signal'] = 'ACCUMULATION'
+                                            result['alert'] = f'Large buyers dominating ({buy_trades} buys vs {sell_trades} sells)'
+                                        elif sell_trades > buy_trades * 2:
+                                            result['whale_signal'] = 'DISTRIBUTION'
+                                            result['alert'] = f'Large sellers dominating ({sell_trades} sells vs {buy_trades} buys)'
+                                        elif len(large_trades) >= 3:
+                                            result['whale_signal'] = 'ACTIVE'
+
+        except Exception as e:
+            print(f"Whale activity error for {coin}: {e}")
+
+        self._set_cache(cache_key, result)
+        return result
+
+    async def get_derivatives_intelligence(self, coin: str) -> Dict:
+        """Get combined derivatives data: L/S ratio, taker volume, order book, liquidations"""
+        import asyncio as _aio
+
+        tasks = [
+            self.get_long_short_ratio(coin),
+            self.get_taker_volume(coin),
+            self.get_order_book_depth(coin),
+            self.get_liquidation_estimates(coin)
+        ]
+        results = await _aio.gather(*tasks, return_exceptions=True)
+
+        ls_ratio = results[0] if not isinstance(results[0], Exception) else {'signal': 'ERROR'}
+        taker = results[1] if not isinstance(results[1], Exception) else {'pressure': 'ERROR'}
+        orderbook = results[2] if not isinstance(results[2], Exception) else {'imbalance': 'ERROR'}
+        liquidations = results[3] if not isinstance(results[3], Exception) else {'recent_signal': 'ERROR'}
+
+        # Composite signal
+        bullish_count = 0
+        bearish_count = 0
+
+        ls_signal = ls_ratio.get('signal', 'NEUTRAL')
+        if ls_signal in ('SMART_MONEY_LONG', 'CONSENSUS_LONG'):
+            bullish_count += 1
+        elif ls_signal in ('SMART_MONEY_SHORT', 'CONSENSUS_SHORT'):
+            bearish_count += 1
+
+        pressure = taker.get('pressure', 'BALANCED')
+        if pressure in ('BUYERS', 'STRONG_BUYERS'):
+            bullish_count += 1
+        elif pressure in ('SELLERS', 'STRONG_SELLERS'):
+            bearish_count += 1
+
+        imbalance = orderbook.get('imbalance', 'BALANCED')
+        if imbalance in ('BID_HEAVY', 'STRONG_BID'):
+            bullish_count += 1
+        elif imbalance in ('ASK_HEAVY', 'STRONG_ASK'):
+            bearish_count += 1
+
+        overall = 'BULLISH' if bullish_count >= 2 else 'BEARISH' if bearish_count >= 2 else 'NEUTRAL'
+
+        return {
+            'long_short_ratio': ls_ratio,
+            'taker_volume': taker,
+            'order_book': orderbook,
+            'liquidations': liquidations,
+            'overall_signal': overall,
+            'timestamp': datetime.now().isoformat()
+        }
+
+    async def get_market_sentiment(self, coin: str) -> Dict:
+        """Get combined market sentiment data for a coin"""
+        fear_greed = await self.get_fear_greed_index()
+        funding = await self.get_funding_rate(coin)
+        oi = await self.get_open_interest(coin)
+
+        signals = []
+        fg_value = fear_greed['value']
+        if fg_value >= 75: signals.append('BULLISH')
+        elif fg_value <= 25: signals.append('BEARISH')
+        else: signals.append('NEUTRAL')
+
+        funding_sent = funding['sentiment']
+        if funding_sent in ('BULLISH', 'EXTREME_GREED'): signals.append('BULLISH')
+        elif funding_sent in ('BEARISH', 'EXTREME_FEAR'): signals.append('BEARISH')
+        else: signals.append('NEUTRAL')
+
+        bullish_count = signals.count('BULLISH')
+        bearish_count = signals.count('BEARISH')
+        overall = 'BULLISH' if bullish_count > bearish_count else 'BEARISH' if bearish_count > bullish_count else 'NEUTRAL'
+
+        return {
+            'fear_greed': fear_greed,
+            'funding_rate': funding,
+            'open_interest': oi,
+            'overall_sentiment': overall,
+            'timestamp': datetime.now().isoformat()
+        }
+
+market_data_service = MarketDataService()
+
+# ============================================================
 # NEWS API ROUTES
 # ============================================================
 
@@ -1768,12 +3320,128 @@ async def get_news_sentiment():
         return {'overall_sentiment': 'UNKNOWN', 'error': str(e)}
 
 # ============================================================
+# MARKET SENTIMENT API ROUTES
+# ============================================================
+
+@app.get("/market-sentiment/{coin}")
+async def get_market_sentiment(coin: str):
+    """Get market sentiment data (Fear & Greed, Funding Rate, Open Interest)"""
+    try:
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+        sentiment = await market_data_service.get_market_sentiment(coin_upper)
+        return {
+            'coin': coin_upper,
+            **sentiment
+        }
+    except Exception as e:
+        print(f"Error fetching market sentiment: {e}")
+        return {
+            'coin': coin.upper(),
+            'error': str(e),
+            'fear_greed': {'value': 0, 'label': 'Unknown', 'error': str(e)},
+            'funding_rate': {'rate': 0, 'sentiment': 'NEUTRAL', 'error': str(e)},
+            'open_interest': {'value': 0, 'error': str(e)},
+            'overall_sentiment': 'UNKNOWN',
+            'timestamp': datetime.now().isoformat()
+        }
+
+@app.get("/fear-greed")
+async def get_fear_greed():
+    """Get current Fear & Greed Index"""
+    try:
+        fg = await market_data_service.get_fear_greed_index()
+        return fg
+    except Exception as e:
+        return {'value': 0, 'label': 'Unknown', 'error': str(e)}
+
+@app.get("/klines/{coin}")
+async def get_klines(coin: str, interval: str = "1h", limit: int = 168):
+    """Get OHLCV kline/candlestick data from Binance (free, no auth)"""
+    try:
+        coin_upper = coin.upper()
+        symbol = coin_upper.replace('_', '')
+        if '_' not in coin_upper:
+            symbol = f"{coin_upper}USDT"
+
+        valid_intervals = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
+        if interval not in valid_intervals:
+            interval = '1h'
+        limit = min(max(limit, 1), 1000)
+
+        import requests as req
+        url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
+        resp = req.get(url, timeout=10)
+        if resp.status_code != 200:
+            return {'error': f'Binance API returned {resp.status_code}', 'data': []}
+
+        raw = resp.json()
+        data = []
+        for k in raw:
+            data.append({
+                'time': int(k[0]) // 1000,
+                'open': float(k[1]),
+                'high': float(k[2]),
+                'low': float(k[3]),
+                'close': float(k[4]),
+                'volume': float(k[5])
+            })
+
+        return {'coin': coin_upper, 'interval': interval, 'data': data}
+    except Exception as e:
+        print(f"Klines API error: {e}")
+        return {'error': str(e), 'data': []}
+
+@app.get("/derivatives/{coin}")
+async def get_derivatives(coin: str):
+    """Get derivatives intelligence: L/S ratio, taker volume, order book, liquidation estimates"""
+    try:
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+        data = await market_data_service.get_derivatives_intelligence(coin_upper)
+        return {'coin': coin_upper, **data}
+    except Exception as e:
+        print(f"Error fetching derivatives data: {e}")
+        return {
+            'coin': coin.upper(),
+            'error': str(e),
+            'overall_signal': 'UNKNOWN',
+            'long_short_ratio': {'signal': 'ERROR', 'error': str(e)},
+            'taker_volume': {'pressure': 'ERROR', 'error': str(e)},
+            'order_book': {'imbalance': 'ERROR', 'error': str(e)},
+            'liquidations': {'recent_signal': 'ERROR', 'error': str(e)},
+            'timestamp': datetime.now().isoformat()
+        }
+
+@app.get("/whales/{coin}")
+async def get_whales(coin: str):
+    """Get whale activity data for a coin"""
+    try:
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+        data = await market_data_service.get_whale_activity(coin_upper)
+        return {'coin': coin_upper, **data}
+    except Exception as e:
+        print(f"Error fetching whale data: {e}")
+        return {
+            'coin': coin.upper(),
+            'error': str(e),
+            'whale_signal': 'UNKNOWN',
+            'recent_large_txs': [],
+            'alert': None
+        }
+
+# ============================================================
 # MAIN
 # ============================================================
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting Crypto AI Trading API v5.0")
-    print("📊 Trade-Type-Specific Analysis System")
-    print("📰 News Feed Service Enabled")
+    print("Starting Crypto AI Trading API v6.0")
+    print("Trade-Type-Specific Analysis + AI-Powered Insights")
+    print("Volume Analysis + Market Sentiment Enabled")
+    print("News Feed Service Enabled")
     uvicorn.run(app, host="0.0.0.0", port=8000)
