@@ -1,6 +1,6 @@
 # Crypto AI Trading System v6.0
 
-A full-stack crypto trading intelligence platform with ML predictions, AI-powered analysis, and real-time market data — all using **free** APIs.
+A full-stack crypto trading intelligence platform with ML predictions, AI-powered analysis, and real-time market data.
 
 ## Features
 
@@ -12,7 +12,7 @@ A full-stack crypto trading intelligence platform with ML predictions, AI-powere
 - **Position Sizing** — Kelly Criterion + ATR-based stop loss/take profit
 
 ### AI-Powered Insights (FREE)
-- **Groq** (Llama 3.3 70B) as primary — completely free
+- **Groq** (Llama 3.3 70B) as primary
 - **OpenAI** (GPT-3.5-turbo) as fallback
 - Cross-references technicals, volume, sentiment, derivatives, news, and whale data
 - Returns: TLDR, positives/risks with severity, market pulse, entry strategy, conviction reason
@@ -46,9 +46,12 @@ A full-stack crypto trading intelligence platform with ML predictions, AI-powere
 - **SOL/PEPE** — Outlier trade detection from Binance trades
 - Accumulation/Distribution signal
 
-### News & Geopolitics
-- Crypto news with sentiment scoring
-- Geopolitical news impact analysis
+### News & Geopolitics (Arkham-Style)
+- **Full-width card grid** layout below coin cards
+- **6 category tabs** — All, Crypto, Geopolitical, Bullish, Bearish, High Impact
+- **Sentiment-based gradient headers** — green (bullish), red (bearish), purple (neutral)
+- **Source watermarks** and category/sentiment badges on each card
+- Responsive grid: 3 cols → 2 cols → 1 col
 
 ### UX
 - **Hover tooltips** on every field explaining what each metric means
@@ -132,6 +135,36 @@ crontab -e
 | `GET /fear-greed` | Fear & Greed Index |
 | `GET /ai-status` | AI provider availability |
 | `WS /ws/prices` | Real-time price WebSocket |
+
+## Project Structure
+```
+crypto-ai-system/
+├── api_final.py              # FastAPI backend (port 8000)
+├── update_data.py            # Automated data updater
+├── requirements.txt          # Python dependencies
+├── .env                      # API keys (GROQ, OpenAI)
+├── data/                     # Historical OHLCV + features
+│   └── {COIN}_USDT_*.csv
+├── models/                   # Trained ML models
+│   └── {COIN}_USDT/
+│       ├── random_forest_*.pkl
+│       └── xgboost_*.pkl
+└── dashboard/                # React frontend (port 3000)
+    ├── .env                  # Supabase keys
+    └── src/components/
+        ├── Dashboard.tsx     # Main portfolio dashboard
+        ├── Coinpage.tsx      # Per-coin analysis page
+        ├── PriceChart.tsx    # Interactive TradingView charts
+        └── NewsFeed.tsx      # Arkham-style news grid
+```
+
+## Version History
+| Version | Highlights |
+|---------|-----------|
+| **v6.0** | Groq/OpenAI AI analysis, derivatives intelligence, whale tracking, interactive charts, tooltips, Arkham-style news grid |
+| **v5.0** | Supabase auth, portfolio tracking, trade-type-specific analysis |
+| **v4.1** | Scenario Engine, WebSocket prices, WIN/LOSS probability display |
+| **v2.0** | Initial UI + Backend release |
 
 ## Note
 Training data and models are excluded from the repository. Run `collect_multi_timeframe.py` to download historical data, then train models using the training scripts.
