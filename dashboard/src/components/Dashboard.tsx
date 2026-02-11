@@ -581,8 +581,6 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* News Feed */}
-          <NewsFeed />
         </aside>
 
         {/* CENTER: Signal Cards (Full Width) */}
@@ -678,6 +676,9 @@ const Dashboard: React.FC = () => {
               );
             })}
           </div>
+
+          {/* News Feed - Arkham-style cards */}
+          <NewsFeed />
         </main>
       </div>
 
