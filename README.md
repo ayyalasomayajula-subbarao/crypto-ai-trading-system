@@ -81,7 +81,7 @@ Visible on the Dashboard below the coin cards:
 - **Walk-Forward Validation** — Test model performance on unseen data windows
 - **Rolling Robustness** — Verify strategy stability across multiple time periods
 
-### AI-Powered Insights (FREE)
+### AI-Powered Insights
 - **Groq** (Llama 3.3 70B) as primary
 - **OpenAI** (GPT-3.5-turbo) as fallback
 - Cross-references technicals, volume, sentiment, derivatives, news, and whale data
@@ -135,9 +135,7 @@ BTC/USDT, ETH/USDT, SOL/USDT, PEPE/USDT
 
 ## Setup
 
-### Local Development
-
-#### Backend
+### Backend
 ```bash
 cd crypto-ai-system
 python -m venv venv
@@ -152,7 +150,7 @@ python api_final.py
 # Runs on http://localhost:8000
 ```
 
-#### Frontend
+### Frontend
 ```bash
 cd dashboard
 npm install
@@ -164,31 +162,6 @@ npm install
 npm start
 # Runs on http://localhost:3000
 ```
-
-### Production (EC2)
-
-The app runs as a single process — FastAPI serves both the API and the React frontend on port 8000.
-
-```bash
-# Build frontend (on your local machine)
-cd dashboard
-REACT_APP_API_URL=http://YOUR_EC2_IP:8000 REACT_APP_WS_URL=ws://YOUR_EC2_IP:8000/ws/prices npm run build
-
-# Upload to EC2
-scp -r api_final.py paper_trader.py backtesting_engine.py requirements.txt .env models/ dashboard/build/ data/ ubuntu@YOUR_EC2_IP:~/crypto-ai-system/
-
-# On EC2: install and run
-cd ~/crypto-ai-system
-python3.11 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-
-# Start with paper trading auto-enabled
-tmux new -s trading
-AUTO_START_PAPER_TRADING=true PAPER_TRADING_CAPITAL=1000 python3 api_final.py
-# Ctrl+B, D to detach
-```
-
-Open port 8000 in your AWS Security Group, then visit `http://YOUR_EC2_IP:8000/`
 
 ## API Endpoints
 
