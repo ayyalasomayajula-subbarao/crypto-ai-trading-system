@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './NewsFeed.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
 interface NewsItem {
   title: string;
   source: string;
@@ -87,7 +89,7 @@ const NewsFeed: React.FC = () => {
   const fetchNews = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await axios.get<NewsResponse>('http://localhost:8000/news/all');
+      const response = await axios.get<NewsResponse>(`${API_BASE}/news/all`);
       setNews(response.data);
       setError(null);
     } catch (err) {

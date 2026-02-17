@@ -6,8 +6,10 @@ import NewsFeed from './NewsFeed';
 import { useAuth } from '../context/AuthContext';
 import { PortfolioPnL, HoldingSnapshot } from '../lib/supabase';
 
-const API_BASE = 'http://localhost:8000';
-const WS_URL = 'ws://localhost:8000/ws/prices';
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const WS_URL = process.env.REACT_APP_WS_URL || (
+  API_BASE ? API_BASE.replace(/^http/, 'ws') + '/ws/prices' : `ws://${window.location.host}/ws/prices`
+);
 
 // ============================================================
 // TYPES
@@ -437,7 +439,10 @@ const Dashboard: React.FC = () => {
           <span className={`ws-status ${wsConnected ? 'connected' : 'disconnected'}`}>
             {wsConnected ? '🟢 Live' : '🔴 Offline'}
           </span>
-          <button onClick={fetchSignals} className="refresh-btn">🔄 Refresh</button>
+          <button onClick={() => navigate('/backtest')} className="refresh-btn">Backtest</button>
+          <button onClick={() => navigate('/signals')} className="refresh-btn">Signals</button>
+          <button onClick={() => navigate('/paper-trading')} className="refresh-btn">Paper Trading</button>
+          <button onClick={fetchSignals} className="refresh-btn">Refresh</button>
           {lastUpdate && <span className="last-update">{lastUpdate.toLocaleTimeString()}</span>}
 
           {/* USD to INR Rate */}

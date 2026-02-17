@@ -4,7 +4,7 @@ Complete Trade-Type-Specific Analysis System with AI-Powered Insights
 
 FEATURES in v6.0:
 - Everything from v5.0
-- Groq (FREE) as primary AI provider (Llama 3.3 70B)
+- Groq as primary AI provider (Llama 3.3 70B)
 - OpenAI as fallback AI provider (GPT-3.5-turbo)
 - AI-powered trade analysis with natural language insights
 - Structured JSON responses from LLM
@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 import asyncio
 import json
+import requests
 from dotenv import load_dotenv
 from ta.volume import OnBalanceVolumeIndicator, MFIIndicator, ForceIndexIndicator
 
@@ -776,21 +777,38 @@ class TradingEngine:
         """Load ML models for each coin"""
         model_dir = 'models'
         for coin in self.coins:
-            # Try the correct path structure: models/{coin}/decision_model.pkl
-            model_path = os.path.join(model_dir, coin, 'decision_model.pkl')
-            if os.path.exists(model_path):
-                try:
-                    self.models[coin] = joblib.load(model_path)
-                    # Also load the feature list
-                    feature_list_path = os.path.join(model_dir, coin, 'feature_list.txt')
-                    if os.path.exists(feature_list_path):
-                        with open(feature_list_path, 'r') as f:
-                            self.feature_lists = getattr(self, 'feature_lists', {})
-                            self.feature_lists[coin] = [line.strip() for line in f if line.strip()]
-                    print(f"✅ Loaded model: {coin}")
-                except Exception as e:
-                    print(f"❌ Error loading {coin} model: {e}")
-            else:
+            coin_dir = os.path.join(model_dir, coin)
+            # Try model files in priority order
+            model_candidates = [
+                'wf_decision_model.pkl',  # Walk-forward validated (best)
+                'decision_model.pkl',      # Standard trained
+            ]
+            feature_candidates = [
+                'decision_features.txt',   # Walk-forward features
+                'feature_list.txt',        # Standard features
+            ]
+
+            loaded = False
+            for model_file in model_candidates:
+                model_path = os.path.join(coin_dir, model_file)
+                if os.path.exists(model_path):
+                    try:
+                        self.models[coin] = joblib.load(model_path)
+                        # Load feature list
+                        for feat_file in feature_candidates:
+                            feat_path = os.path.join(coin_dir, feat_file)
+                            if os.path.exists(feat_path):
+                                with open(feat_path, 'r') as f:
+                                    self.feature_lists = getattr(self, 'feature_lists', {})
+                                    self.feature_lists[coin] = [line.strip() for line in f if line.strip()]
+                                break
+                        print(f"✅ Loaded model: {coin} ({model_file})")
+                        loaded = True
+                        break
+                    except Exception as e:
+                        print(f"❌ Error loading {coin} model ({model_file}): {e}")
+
+            if not loaded:
                 # Fallback to old path structure
                 old_model_path = os.path.join(model_dir, f'{coin}_model.pkl')
                 if os.path.exists(old_model_path):
@@ -808,13 +826,13 @@ class TradingEngine:
         
         # Fallback to REST API
         try:
-            import ccxt
-            exchange = ccxt.binance()
-            symbol = coin.replace('_', '/')
-            ticker = exchange.fetch_ticker(symbol)
-            return ticker['last'], 'REST_API'
+            symbol = coin.replace('_', '')
+            resp = requests.get(f'https://api.binance.com/api/v3/ticker/price?symbol={symbol}', timeout=5)
+            if resp.status_code == 200:
+                return float(resp.json()['price']), 'REST_API'
         except:
-            return 0, 'UNAVAILABLE'
+            pass
+        return 0, 'UNAVAILABLE'
     
     def load_data(self, coin: str, multi_tf: bool = False) -> Optional[pd.DataFrame]:
         """Load historical data for a coin
@@ -2120,15 +2138,20 @@ async def shutdown_event():
 
 @app.get("/")
 async def root():
+    # Serve frontend if build exists, otherwise API info
+    build_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "build")
+    index_path = os.path.join(build_dir, "index.html")
+    if os.path.isfile(index_path):
+        from starlette.responses import FileResponse
+        return FileResponse(index_path)
     return {
         "name": "Crypto AI Trading API",
-        "version": "5.0.0",
+        "version": "6.0.0",
         "features": [
             "Trade-type-specific analysis",
-            "Experience level modifiers",
-            "Enhanced FOMO detection",
+            "AI-powered insights (Groq + OpenAI)",
+            "Paper trading engine",
             "Real-time WebSocket prices",
-            "Expectancy & Readiness metrics"
         ]
     }
 
@@ -2437,10 +2460,11 @@ class NewsService:
             ('https://bitcoinmagazine.com/feed', 'Bitcoin Magazine'),
         ]
 
-        async with aiohttp.ClientSession() as session:
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; CryptoAI/6.0)'}
+        async with aiohttp.ClientSession(headers=headers) as session:
             for feed_url, source in rss_feeds:
                 try:
-                    async with session.get(feed_url, timeout=10) as response:
+                    async with session.get(feed_url, timeout=aiohttp.ClientTimeout(total=15)) as response:
                         if response.status == 200:
                             content = await response.text()
                             root = ET.fromstring(content)
@@ -2505,10 +2529,11 @@ class NewsService:
             ('https://www.cnbc.com/id/100003114/device/rss/rss.html', 'CNBC'),
         ]
 
-        async with aiohttp.ClientSession() as session:
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; CryptoAI/6.0)'}
+        async with aiohttp.ClientSession(headers=headers) as session:
             for feed_url, source in rss_feeds:
                 try:
-                    async with session.get(feed_url, timeout=10) as response:
+                    async with session.get(feed_url, timeout=aiohttp.ClientTimeout(total=15)) as response:
                         if response.status == 200:
                             content = await response.text()
                             root = ET.fromstring(content)
@@ -3435,6 +3460,289 @@ async def get_whales(coin: str):
         }
 
 # ============================================================
+# BACKTESTING ENDPOINTS
+# ============================================================
+
+from backtesting_engine import BacktestingEngine, run_backtest_for_coin, run_backtest_all_coins
+
+# Cache backtest results to avoid re-running expensive computations
+_backtest_cache = {}
+_backtest_cache_ttl = {}
+BACKTEST_CACHE_SECONDS = 300  # 5 minutes
+
+def _get_cached_backtest(cache_key):
+    if cache_key in _backtest_cache and cache_key in _backtest_cache_ttl:
+        if datetime.now().timestamp() - _backtest_cache_ttl[cache_key] < BACKTEST_CACHE_SECONDS:
+            return _backtest_cache[cache_key]
+    return None
+
+def _set_cached_backtest(cache_key, result):
+    _backtest_cache[cache_key] = result
+    _backtest_cache_ttl[cache_key] = datetime.now().timestamp()
+
+@app.get("/backtest/{coin}")
+async def run_backtest(coin: str, threshold: float = 0.45, capital: float = 10000):
+    """Run backtest for a single coin with configurable parameters."""
+    try:
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+
+        cache_key = f"{coin_upper}_{threshold}_{capital}"
+        cached = _get_cached_backtest(cache_key)
+        if cached:
+            return cached
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, run_backtest_for_coin, coin_upper, threshold, capital
+        )
+
+        _set_cached_backtest(cache_key, result)
+        return result
+    except Exception as e:
+        return {'coin': coin.upper(), 'error': str(e)}
+
+@app.get("/backtest")
+async def run_backtest_all(threshold: float = 0.45, capital: float = 10000):
+    """Run backtest for all supported coins."""
+    try:
+        cache_key = f"ALL_{threshold}_{capital}"
+        cached = _get_cached_backtest(cache_key)
+        if cached:
+            return cached
+
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            None, run_backtest_all_coins, threshold, capital
+        )
+
+        # Build summary
+        summary = []
+        for coin, r in results.items():
+            if r.get('metrics'):
+                summary.append({
+                    'coin': coin,
+                    'total_return_pct': r['metrics']['total_return_pct'],
+                    'win_rate': r['metrics']['win_rate'],
+                    'sharpe_ratio': r['metrics']['sharpe_ratio'],
+                    'max_drawdown_pct': r['metrics']['max_drawdown_pct'],
+                    'total_trades': r['metrics']['total_trades']
+                })
+
+        response = {'results': results, 'summary': summary}
+        _set_cached_backtest(cache_key, response)
+        return response
+    except Exception as e:
+        return {'error': str(e)}
+
+@app.get("/backtest/walk-forward/{coin}")
+async def run_walk_forward(coin: str, splits: int = 5, threshold: float = 0.45):
+    """Run walk-forward validation for a coin."""
+    try:
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+
+        cache_key = f"WF_{coin_upper}_{splits}_{threshold}"
+        cached = _get_cached_backtest(cache_key)
+        if cached:
+            return cached
+
+        engine = BacktestingEngine(coin_upper, threshold=threshold)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, engine.run_walk_forward, splits)
+
+        _set_cached_backtest(cache_key, result)
+        return result
+    except Exception as e:
+        return {'coin': coin.upper(), 'error': str(e)}
+
+@app.get("/backtest/monte-carlo/{coin}")
+async def run_monte_carlo(coin: str, simulations: int = 100, threshold: float = 0.45):
+    """Run Monte Carlo stress test for a coin (100 randomized simulations)."""
+    try:
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+
+        cache_key = f"MC_{coin_upper}_{simulations}_{threshold}"
+        cached = _get_cached_backtest(cache_key)
+        if cached:
+            return cached
+
+        engine = BacktestingEngine(coin_upper, threshold=threshold)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, engine.run_monte_carlo, simulations)
+
+        _set_cached_backtest(cache_key, result)
+        return result
+    except Exception as e:
+        return {'coin': coin.upper(), 'error': str(e)}
+
+@app.get("/backtest/walk-forward-validation/{coin}")
+async def run_walk_forward_validation(coin: str):
+    """
+    TRUE walk-forward validation with 3-block temporal split.
+    Model retrained on TRAIN only, threshold tuned on VALIDATE, single run on TEST.
+    No data leakage. No re-optimization.
+    """
+    try:
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+
+        cache_key = f"WFV_{coin_upper}"
+        cached = _get_cached_backtest(cache_key)
+        if cached:
+            return cached
+
+        from walk_forward_validation import run_walk_forward
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, run_walk_forward, coin_upper)
+
+        _set_cached_backtest(cache_key, result)
+        return result
+    except Exception as e:
+        return {'coin': coin.upper(), 'error': str(e)}
+
+@app.get("/backtest/rolling-robustness/{coin}")
+async def run_rolling_robustness(coin: str):
+    """
+    Rolling walk-forward robustness validation.
+    Tests strategy across multiple market regimes with expanding training windows.
+    """
+    try:
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+
+        cache_key = f"ROLLING_{coin_upper}"
+        cached = _get_cached_backtest(cache_key)
+        if cached:
+            return cached
+
+        from rolling_walk_forward import run_coin_robustness
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, run_coin_robustness, coin_upper)
+
+        _set_cached_backtest(cache_key, result)
+        return result
+    except Exception as e:
+        return {'coin': coin.upper(), 'error': str(e)}
+
+@app.get("/backtest/rolling-robustness")
+async def run_all_rolling_robustness():
+    """Rolling robustness for all coins at once."""
+    try:
+        cache_key = "ROLLING_ALL"
+        cached = _get_cached_backtest(cache_key)
+        if cached:
+            return cached
+
+        from rolling_walk_forward import run_all
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, run_all)
+
+        _set_cached_backtest(cache_key, result)
+        return result
+    except Exception as e:
+        return {'error': str(e)}
+
+# ============================================================
+# PAPER TRADING ENDPOINTS
+# ============================================================
+
+from paper_trader import paper_trader
+
+@app.on_event("startup")
+async def auto_start_paper_trading():
+    """Auto-start paper trading if AUTO_START_PAPER_TRADING env var is set."""
+    auto_start = os.getenv('AUTO_START_PAPER_TRADING', '').lower()
+    if auto_start in ('1', 'true', 'yes'):
+        capital = float(os.getenv('PAPER_TRADING_CAPITAL', '10000'))
+        print(f"\n  [PAPER] Auto-starting paper trading (capital=${capital:,.0f})...")
+        paper_trader.start(capital=capital)
+
+@app.post("/paper-trading/start")
+async def start_paper_trading(capital: float = None):
+    """Start the live paper trading bot. Optional capital param sets initial equity."""
+    try:
+        result = paper_trader.start(capital=capital)
+        return result
+    except Exception as e:
+        return {'status': 'error', 'error': str(e)}
+
+@app.post("/paper-trading/stop")
+async def stop_paper_trading():
+    """Stop the paper trading bot."""
+    try:
+        result = paper_trader.stop()
+        return result
+    except Exception as e:
+        return {'status': 'error', 'error': str(e)}
+
+@app.post("/paper-trading/reset")
+async def reset_paper_trading():
+    """Stop and reset paper trading state (clears all trades and equity)."""
+    try:
+        paper_trader.stop()
+        import os as _os
+        from paper_trader import STATE_FILE
+        if _os.path.exists(STATE_FILE):
+            _os.remove(STATE_FILE)
+        paper_trader.state = {}
+        return {'status': 'reset', 'message': 'State cleared. Ready to start fresh.'}
+    except Exception as e:
+        return {'status': 'error', 'error': str(e)}
+
+@app.get("/paper-trading/status")
+async def get_paper_trading_status():
+    """Get current paper trading status, equity, and open positions."""
+    try:
+        return paper_trader.get_status()
+    except Exception as e:
+        return {'running': False, 'error': str(e)}
+
+@app.get("/paper-trading/trades")
+async def get_paper_trading_trades():
+    """Get full paper trading trade log."""
+    try:
+        return {'trades': paper_trader.get_trades()}
+    except Exception as e:
+        return {'trades': [], 'error': str(e)}
+
+@app.get("/paper-trading/metrics")
+async def get_paper_trading_metrics():
+    """Get paper trading metrics: WR, PF, Sharpe, DD, per-coin breakdown."""
+    try:
+        return paper_trader.get_metrics()
+    except Exception as e:
+        return {'error': str(e), 'total_trades': 0}
+
+# ============================================================
+# SERVE FRONTEND (production static files)
+# ============================================================
+
+FRONTEND_BUILD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "build")
+
+if os.path.isdir(FRONTEND_BUILD):
+    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import FileResponse
+
+    # Serve static assets (JS, CSS, images)
+    app.mount("/static", StaticFiles(directory=os.path.join(FRONTEND_BUILD, "static")), name="static")
+
+    # Catch-all: serve index.html for any non-API route (React Router)
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # Don't intercept API routes
+        file_path = os.path.join(FRONTEND_BUILD, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(FRONTEND_BUILD, "index.html"))
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -3444,4 +3752,8 @@ if __name__ == "__main__":
     print("Trade-Type-Specific Analysis + AI-Powered Insights")
     print("Volume Analysis + Market Sentiment Enabled")
     print("News Feed Service Enabled")
+    print("Backtesting Engine Enabled")
+    print("Paper Trading Engine Available")
+    if os.path.isdir(FRONTEND_BUILD):
+        print("Frontend Dashboard: Serving from build/")
     uvicorn.run(app, host="0.0.0.0", port=8000)
