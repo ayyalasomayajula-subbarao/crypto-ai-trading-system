@@ -2,10 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import PriceChart from './PriceChart';
+import { useAuth } from '../context/AuthContext';
+import { db } from '../lib/supabase';
 import './Coinpage.css';
 
-const API_BASE = 'http://localhost:8000';
-const WS_URL = 'ws://localhost:8000/ws/prices';
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const WS_URL = process.env.REACT_APP_WS_URL || (
+  API_BASE ? API_BASE.replace(/^http/, 'ws') + '/ws/prices' : `ws://${window.location.host}/ws/prices`
+);
 
 // ============================================================
 // TYPES
@@ -402,6 +406,7 @@ const Tooltip: React.FC<{ text: string; children: React.ReactNode }> = ({ text, 
 const CoinPage: React.FC = () => {
   const { coinId } = useParams<{ coinId: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const coin = coinId?.toUpperCase() || 'BTC_USDT';
   const coinConfig = COIN_CONFIG[coin] || COIN_CONFIG['BTC_USDT'];
 
@@ -498,12 +503,31 @@ const CoinPage: React.FC = () => {
       );
       setAnalysis(response.data);
       setLastAnalysis(new Date());
+
+      // Auto-save signal to Supabase for history tracking
+      if (user && response.data) {
+        const d = response.data;
+        db.saveSignal({
+          user_id: user.id,
+          coin: d.coin,
+          trade_type: d.trade_type,
+          verdict: d.verdict,
+          confidence: d.confidence,
+          win_probability: d.win_probability,
+          loss_probability: d.loss_probability,
+          sideways_probability: d.sideways_probability || null,
+          expectancy: d.expectancy,
+          price_at_signal: d.price,
+          market_regime: d.market_context?.regime?.regime || null,
+          reasoning: { reasons: d.reasoning, warnings: d.warnings }
+        }).catch(err => console.error('Signal save error:', err));
+      }
     } catch (error) {
       console.error('Error fetching analysis:', error);
     } finally {
       setLoading(false);
     }
-  }, [coin, capital, tradeType, experience, reason, recentLosses, tradesToday]);
+  }, [coin, capital, tradeType, experience, reason, recentLosses, tradesToday, user]);
 
   // Fetch AI Analysis
   const fetchAIAnalysis = useCallback(async () => {

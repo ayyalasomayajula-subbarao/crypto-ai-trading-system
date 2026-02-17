@@ -1,0 +1,413 @@
+/* ============================================================
+   PAPER TRADING - Live Monitoring Dashboard
+   ============================================================ */
+
+.paper-trading-page {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0a0e17 0%, #1a1f2e 50%, #0a0e17 100%);
+  color: #e2e8f0;
+}
+
+/* Header */
+.paper-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  background: rgba(15, 20, 30, 0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.paper-header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.paper-header h1 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin: 0;
+}
+
+.paper-header .status-badge {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.paper-header .status-badge.running {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.paper-header .status-badge.stopped {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.paper-header .header-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.paper-header .back-btn,
+.paper-header .control-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.paper-header .back-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+}
+
+.paper-header .control-btn.start {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #22c55e;
+}
+
+.paper-header .control-btn.start:hover {
+  background: rgba(34, 197, 94, 0.25);
+}
+
+.paper-header .control-btn.stop {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.paper-header .control-btn.stop:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.capital-input-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.capital-input-group label {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.capital-input {
+  width: 100px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #f1f5f9;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  text-align: right;
+}
+
+.capital-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+/* Content Layout */
+.paper-content {
+  padding: 1.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Top Stats Row */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.stat-card {
+  background: rgba(15, 20, 30, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+}
+
+.stat-card .stat-label {
+  font-size: 0.7rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.4rem;
+}
+
+.stat-card .stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.stat-card .stat-value.positive { color: #22c55e; }
+.stat-card .stat-value.negative { color: #ef4444; }
+.stat-card .stat-value.neutral { color: #f59e0b; }
+
+.stat-card .stat-sub {
+  font-size: 0.72rem;
+  color: #64748b;
+  margin-top: 0.2rem;
+}
+
+/* Day Progress */
+.day-progress {
+  background: rgba(15, 20, 30, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+
+.day-progress .progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.day-progress .progress-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.day-progress .progress-header span {
+  font-size: 0.85rem;
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
+.progress-bar-container {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #22c55e);
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+/* Equity Chart */
+.equity-chart-section {
+  background: rgba(15, 20, 30, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+
+.equity-chart-section h3 {
+  margin: 0 0 1rem 0;
+  font-size: 0.95rem;
+  color: #94a3b8;
+}
+
+.equity-chart-container {
+  height: 300px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Section Panels */
+.panel-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.panel {
+  background: rgba(15, 20, 30, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+
+.panel h3 {
+  margin: 0 0 1rem 0;
+  font-size: 0.95rem;
+  color: #94a3b8;
+}
+
+/* Open Positions */
+.positions-table,
+.trades-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.positions-table th,
+.trades-table th {
+  font-size: 0.7rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.positions-table td,
+.trades-table td {
+  font-size: 0.8rem;
+  color: #e2e8f0;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.positions-table tr:hover,
+.trades-table tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Per-Coin Metrics */
+.coin-metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.coin-metric-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.coin-metric-card .coin-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 0.75rem;
+}
+
+.coin-metric-card .metric-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  padding: 0.2rem 0;
+}
+
+.coin-metric-card .metric-row .label { color: #64748b; }
+.coin-metric-card .metric-row .value { color: #e2e8f0; font-weight: 600; }
+
+/* Trade Log Section (full width) */
+.trade-log-section {
+  background: rgba(15, 20, 30, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+
+.trade-log-section h3 {
+  margin: 0 0 1rem 0;
+  font-size: 0.95rem;
+  color: #94a3b8;
+}
+
+.trade-log-section .trades-table td.win { color: #22c55e; }
+.trade-log-section .trades-table td.loss { color: #ef4444; }
+
+/* Exit reason badges */
+.exit-badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.exit-badge.TP {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.exit-badge.SL {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.exit-badge.TIME {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+/* Config Panel */
+.config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.config-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.config-item .config-key { color: #64748b; }
+.config-item .config-val { color: #e2e8f0; font-weight: 600; }
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+/* Loading spinner */
+.loading-state {
+  text-align: center;
+  padding: 3rem;
+  color: #64748b;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .panel-grid {
+    grid-template-columns: 1fr;
+  }
+  .coin-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .paper-header {
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem;
+  }
+  .stats-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .paper-content {
+    padding: 1rem;
+  }
+}

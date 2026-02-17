@@ -91,6 +91,31 @@ export interface PortfolioPnL {
   period_end: string;
 }
 
+export interface TradeSignal {
+  id: string;
+  user_id: string | null;
+  coin: string;
+  trade_type: string;
+  verdict: string;
+  confidence: string | null;
+  win_probability: number | null;
+  loss_probability: number | null;
+  sideways_probability: number | null;
+  expectancy: number | null;
+  price_at_signal: number | null;
+  market_regime: string | null;
+  reasoning: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface SignalStats {
+  coin: string;
+  total: number;
+  buy: number;
+  wait: number;
+  avoid: number;
+}
+
 // Helper functions for database operations
 export const db = {
   // User Profile
@@ -325,5 +350,69 @@ export const db = {
       return false;
     }
     return true;
+  },
+
+  // Trade Signals (Prediction History)
+  async saveSignal(signal: Omit<TradeSignal, 'id' | 'created_at'>): Promise<TradeSignal | null> {
+    const { data, error } = await supabase
+      .from('trade_signals')
+      .insert(signal)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error saving signal:', error);
+      return null;
+    }
+    return data;
+  },
+
+  async getSignals(userId: string | null, coin?: string, limit = 100): Promise<TradeSignal[]> {
+    let query = supabase
+      .from('trade_signals')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+    if (coin) {
+      query = query.eq('coin', coin);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('Error fetching signals:', error);
+      return [];
+    }
+    return data || [];
+  },
+
+  async getSignalStats(userId: string): Promise<SignalStats[]> {
+    const { data, error } = await supabase
+      .from('trade_signals')
+      .select('coin, verdict')
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Error fetching signal stats:', error);
+      return [];
+    }
+
+    // Aggregate by coin
+    const statsMap: Record<string, SignalStats> = {};
+    (data || []).forEach((s: { coin: string; verdict: string }) => {
+      if (!statsMap[s.coin]) {
+        statsMap[s.coin] = { coin: s.coin, total: 0, buy: 0, wait: 0, avoid: 0 };
+      }
+      statsMap[s.coin].total++;
+      if (s.verdict === 'BUY') statsMap[s.coin].buy++;
+      else if (s.verdict === 'WAIT') statsMap[s.coin].wait++;
+      else statsMap[s.coin].avoid++;
+    });
+
+    return Object.values(statsMap);
   }
 };
