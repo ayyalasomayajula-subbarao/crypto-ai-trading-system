@@ -53,22 +53,39 @@ class BacktestingEngine:
 
     def load_model(self):
         """Load ML model and feature list for the coin."""
-        model_path = f"models/{self.coin}/decision_model.pkl"
-        features_path = f"models/{self.coin}/decision_features.txt"
+        coin_dir = f"models/{self.coin}"
 
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model not found: {model_path}")
+        # Try model files in priority order
+        model_path = None
+        for name in ['wf_decision_model.pkl', 'decision_model.pkl']:
+            candidate = os.path.join(coin_dir, name)
+            if os.path.exists(candidate):
+                model_path = candidate
+                break
+
+        if model_path is None:
+            raise FileNotFoundError(f"No model found in {coin_dir}")
 
         self.model = joblib.load(model_path)
 
         # Patch for sklearn version mismatch (models trained on 1.3.0)
-        # Add missing monotonic_cst attribute to forest and each tree
         if not hasattr(self.model, 'monotonic_cst'):
             self.model.monotonic_cst = None
         if hasattr(self.model, 'estimators_'):
             for est in self.model.estimators_:
                 if not hasattr(est, 'monotonic_cst'):
                     est.monotonic_cst = None
+
+        # Try feature files in priority order
+        features_path = None
+        for name in ['decision_features.txt', 'feature_list.txt']:
+            candidate = os.path.join(coin_dir, name)
+            if os.path.exists(candidate):
+                features_path = candidate
+                break
+
+        if features_path is None:
+            raise FileNotFoundError(f"No feature list found in {coin_dir}")
 
         with open(features_path, 'r') as f:
             self.feature_cols = [line.strip() for line in f.readlines()]
