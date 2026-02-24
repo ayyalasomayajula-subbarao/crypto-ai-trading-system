@@ -1,4 +1,4 @@
-# Crypto AI Trading System v7.0
+# Crypto AI Trading System v7.1
 
 A full-stack crypto trading intelligence platform with ML predictions, AI-powered analysis, paper trading, backtesting, and real-time market data.
 
@@ -7,18 +7,33 @@ A full-stack crypto trading intelligence platform with ML predictions, AI-powere
 ### 1. Login / Sign Up
 Create an account or log in with your email. Authentication is handled by Supabase. All pages are protected — you must be logged in to access the app.
 
-### 2. Dashboard (Home)
-After login, you land on the **Dashboard** — your command center.
+### 2. Overview (Home)
+After login, you land on the **Overview** page — your market command center.
 
+- **Market Banner** — Shows current market condition (opportunities, high risk, etc.)
 - **Live Prices** — BTC, ETH, SOL, PEPE update in real-time via WebSocket
-- **Coin Cards** — Each card shows current price, 24h change, and a quick ML verdict (BUY/WAIT/AVOID)
-- **Navigation** — Click any coin card to dive into detailed analysis, or use the top buttons:
-  - **Backtest** — Test strategies against historical data
-  - **Signals** — View signal history
-  - **Paper Trading** — Monitor the live paper trading bot
+- **Coin Cards** — Each card shows current price, 1H/24H/7D changes, ML verdict (BUY/WAIT/AVOID), expectancy, and active scenarios
+- **News Feed** — Crypto and geopolitical news with sentiment tags below the signals grid
+- **Sidebar Navigation** — Persistent sidebar with links to all sections
 
-### 3. Coin Analysis Page
-Click any coin to see the full analysis breakdown:
+### 3. Portfolio
+Dedicated page for tracking your holdings:
+
+- **Portfolio Summary** — Total value, P&L over selectable periods (24h/7d/30d/all)
+- **Capital Management** — Set and update your trading capital
+- **Holdings List** — Live-priced holdings with sell functionality
+- **Add Holdings** — Add new positions with coin, quantity, and entry price
+
+### 4. Coins
+Browse all supported coins with live prices and quick verdicts:
+
+- **Coin Cards** — BTC, ETH, SOL, PEPE with live WebSocket prices
+- **24H Change** — Color-coded percentage changes
+- **Quick Verdict** — ML model verdict badge and win probability bar
+- Click any coin to open the detailed analysis page
+
+### 5. Coin Analysis Page
+Click any coin for the full analysis breakdown:
 
 - **Price Chart** — Interactive TradingView chart with 9 timeframes (1H to ALL), candlestick or area mode
 - **ML Predictions** — WIN/LOSS/SIDEWAYS probabilities from the trained model
@@ -33,7 +48,7 @@ Click any coin to see the full analysis breakdown:
 - **Price Forecast** — Upside/sideways/downside probabilities with bull/bear targets
 - **AI Analysis** — Click "Run Deep Analysis" for Groq/OpenAI-powered insights including TLDR, risks, entry strategy
 
-### 4. Paper Trading
+### 6. Paper Trading
 The automated paper trading bot runs 24/7 on your server:
 
 - **Start/Stop** — Set your capital and start the bot
@@ -44,20 +59,15 @@ The automated paper trading bot runs 24/7 on your server:
 - **Day Counter** — Progress toward the 45-day validation target
 - The bot uses frozen walk-forward validated models — no parameter changes during the test
 
-### 5. Backtest
+### 7. Backtest
 Test trading strategies against historical data:
 
 - Select a coin and time period
 - See results: total return, win rate, profit factor, max drawdown, trade count
 - Compare different strategies and parameter settings
 
-### 6. News Feed
-Visible on the Dashboard below the coin cards:
-
-- **Crypto News** — From CoinTelegraph, CoinDesk, Decrypt, Bitcoin Magazine
-- **Geopolitical News** — Fed decisions, regulations, macro events
-- **Sentiment Tags** — Each article tagged BULLISH/BEARISH/NEUTRAL with impact score
-- **Category Filters** — All, Crypto, Geopolitical, Bullish, Bearish, High Impact
+### 8. Settings
+Manage your profile and account preferences.
 
 ## Features
 
@@ -69,14 +79,25 @@ Visible on the Dashboard below the coin cards:
 - **Scenario Engine** — Detects FOMO, losing streaks, overtrading, BTC crashes, extreme volatility
 - **Position Sizing** — Kelly Criterion + ATR-based stop loss/take profit
 
-### Paper Trading Engine (NEW in v7)
+### MUI Sidebar Layout (NEW in v7.1)
+- **Persistent Sidebar** — Material UI drawer with Overview, Portfolio, Coins, Backtest, Signals, Paper Trading navigation
+- **Mobile Responsive** — Collapsible hamburger menu on mobile, permanent drawer on desktop
+- **Profile Section** — User avatar, name, and email in sidebar footer
+- **Dark Theme** — MUI ThemeProvider with custom dark palette
+
+### Dedicated Pages (NEW in v7.1)
+- **Portfolio Page** — Extracted from Overview into its own page with full portfolio management
+- **Coins Page** — Browse all coins with live prices, verdicts, and win probability bars
+- **Settings Page** — Profile and account management
+
+### Paper Trading Engine
 - **Automated Hourly Processing** — Fetches candles from Binance, computes features, runs model
 - **Frozen Parameters** — SOL threshold 0.35, PEPE threshold 0.40, TP 5%, SL 3%, TIME 48h
 - **State Persistence** — Survives server restarts via JSON state file
 - **Auto-Start** — Set `AUTO_START_PAPER_TRADING=true` to start on boot
 - **0.5% Equity Risk** per trade with 0.22% round-trip costs
 
-### Backtesting Engine (NEW in v7)
+### Backtesting Engine
 - **Realistic Execution** — Includes trading costs, slippage, position sizing
 - **Walk-Forward Validation** — Test model performance on unseen data windows
 - **Rolling Robustness** — Verify strategy stability across multiple time periods
@@ -114,7 +135,7 @@ Visible on the Dashboard below the coin cards:
 - **SOL/PEPE** — Outlier trade detection from Binance trades
 
 ### News & Geopolitics
-- **Card grid** layout with sentiment-based gradient headers
+- **Responsive card grid** layout with sentiment-based gradient headers
 - **6 category tabs** — All, Crypto, Geopolitical, Bullish, Bearish, High Impact
 - RSS feeds from CoinTelegraph, CoinDesk, Decrypt, Bitcoin Magazine
 
@@ -122,13 +143,14 @@ Visible on the Dashboard below the coin cards:
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | Python, FastAPI, uvicorn |
-| ML Models | scikit-learn (RandomForest), walk-forward validated |
-| Frontend | React 19, TypeScript |
+| Backend | Python 3.9, FastAPI, uvicorn |
+| ML Models | scikit-learn 1.3.0 (RandomForest), walk-forward validated |
+| Frontend | React 19, TypeScript, MUI 6 |
 | Charts | TradingView lightweight-charts |
 | Auth | Supabase |
 | AI | Groq (free), OpenAI (fallback) |
 | Data | Binance API, Blockchair, alternative.me, RSS feeds |
+| Deployment | AWS EC2 (eu-north-1) |
 
 ## Coins Supported
 BTC/USDT, ETH/USDT, SOL/USDT, PEPE/USDT
@@ -138,7 +160,7 @@ BTC/USDT, ETH/USDT, SOL/USDT, PEPE/USDT
 ### Backend
 ```bash
 cd crypto-ai-system
-python -m venv venv
+python3.9 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
@@ -161,6 +183,13 @@ npm install
 
 npm start
 # Runs on http://localhost:3000
+```
+
+### Production Build
+```bash
+cd dashboard
+npm run build
+# Build output served by FastAPI at http://localhost:8000
 ```
 
 ## API Endpoints
@@ -196,10 +225,13 @@ crypto-ai-system/
 ├── walk_forward_validation.py # Walk-forward model validation
 ├── rolling_walk_forward.py   # Rolling robustness testing
 ├── collect_multi_timeframe.py # Data collection script
-├── requirements.txt          # Python dependencies
+├── requirements.txt          # Python dependencies (pinned versions)
 ├── .env                      # API keys (GROQ, OpenAI)
 ├── data/                     # Historical OHLCV + features
 │   ├── {COIN}_USDT_1h.csv
+│   ├── {COIN}_USDT_4h.csv
+│   ├── {COIN}_USDT_1d.csv
+│   ├── {COIN}_USDT_1w.csv
 │   ├── {COIN}_USDT_multi_tf_features.csv
 │   └── paper_trading_state.json
 ├── models/                   # Trained ML models
@@ -209,20 +241,31 @@ crypto-ai-system/
 │       └── decision_features.txt
 └── dashboard/                # React frontend
     ├── .env                  # Supabase keys
-    ├── .env.production       # Production build config
-    └── src/components/
-        ├── Dashboard.tsx     # Main portfolio dashboard
-        ├── Coinpage.tsx      # Per-coin analysis page
-        ├── PaperTrading.tsx  # Paper trading monitor
-        ├── Backtest.tsx      # Backtesting UI
-        ├── SignalHistory.tsx  # Signal history
-        ├── PriceChart.tsx    # Interactive TradingView charts
-        └── NewsFeed.tsx      # News grid with sentiment
+    └── src/
+        ├── theme.ts          # MUI dark theme configuration
+        ├── App.tsx            # Routes with Layout wrapper
+        ├── components/
+        │   ├── layout/
+        │   │   ├── Layout.tsx    # Sidebar + TopBar + Outlet
+        │   │   ├── Sidebar.tsx   # MUI persistent drawer navigation
+        │   │   └── TopBar.tsx    # Mobile hamburger + Live indicator
+        │   ├── Dashboard.tsx     # Overview: signals grid + news
+        │   ├── Coinpage.tsx      # Per-coin analysis page
+        │   ├── PaperTrading.tsx  # Paper trading monitor
+        │   ├── Backtest.tsx      # Backtesting UI
+        │   ├── SignalHistory.tsx  # Signal history
+        │   ├── PriceChart.tsx    # Interactive TradingView charts
+        │   └── NewsFeed.tsx      # News grid with sentiment
+        └── pages/
+            ├── PortfolioPage.tsx # Portfolio management
+            ├── CoinsPage.tsx     # Coin browser with live prices
+            └── SettingsPage.tsx  # Profile & account settings
 ```
 
 ## Version History
 | Version | Highlights |
 |---------|-----------|
+| **v7.1** | MUI sidebar layout, dedicated Portfolio/Coins/Settings pages, pinned Python dependencies, prod/local model sync |
 | **v7.0** | Paper trading engine, backtesting, walk-forward validation, EC2 deployment, dynamic API URLs |
 | **v6.0** | Groq/OpenAI AI analysis, derivatives intelligence, whale tracking, interactive charts, tooltips |
 | **v5.0** | Supabase auth, portfolio tracking, trade-type-specific analysis |
@@ -230,4 +273,4 @@ crypto-ai-system/
 | **v2.0** | Initial UI + Backend release |
 
 ## Note
-Training data and models are excluded from the repository. Run `collect_multi_timeframe.py` to download historical data, then use `walk_forward_validation.py` to train and validate models.
+Training data and models are excluded from the repository. Run `collect_multi_timeframe.py` to download historical data, then use `walk_forward_validation.py` to train and validate models. Use Python 3.9 to ensure model pickle compatibility across environments.

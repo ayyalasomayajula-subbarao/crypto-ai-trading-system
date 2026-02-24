@@ -4,7 +4,7 @@ import type { IChartApi, ISeriesApi, CandlestickData, AreaData, Time } from 'lig
 import axios from 'axios';
 import './PriceChart.css';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
 interface PriceChartProps {
   coin: string;

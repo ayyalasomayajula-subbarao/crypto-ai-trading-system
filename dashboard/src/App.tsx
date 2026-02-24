@@ -1,69 +1,52 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { ThemeProvider, CssBaseline } from '@mui/material';
+import theme from './theme';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import Layout from './components/layout/Layout';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import CoinPage from './components/Coinpage';
 import Backtest from './components/Backtest';
 import SignalHistory from './components/SignalHistory';
 import PaperTrading from './components/PaperTrading';
+import CoinsPage from './pages/CoinsPage';
+import PortfolioPage from './pages/PortfolioPage';
+import SettingsPage from './pages/SettingsPage';
 import './App.css';
 
 function App() {
   return (
-    <Router>
-      <AuthProvider>
-        <div className="App">
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <Router>
+        <AuthProvider>
           <Routes>
             {/* Public routes */}
             <Route path="/login" element={<Login />} />
 
-            {/* Protected routes */}
+            {/* Protected routes with sidebar layout */}
             <Route
-              path="/"
               element={
                 <ProtectedRoute>
-                  <Dashboard />
+                  <Layout />
                 </ProtectedRoute>
               }
-            />
-            <Route
-              path="/coin/:coinId"
-              element={
-                <ProtectedRoute>
-                  <CoinPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/backtest"
-              element={
-                <ProtectedRoute>
-                  <Backtest />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/signals"
-              element={
-                <ProtectedRoute>
-                  <SignalHistory />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/paper-trading"
-              element={
-                <ProtectedRoute>
-                  <PaperTrading />
-                </ProtectedRoute>
-              }
-            />
+            >
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/portfolio" element={<PortfolioPage />} />
+              <Route path="/coins" element={<CoinsPage />} />
+              <Route path="/coin/:coinId" element={<CoinPage />} />
+              <Route path="/backtest" element={<Backtest />} />
+              <Route path="/signals" element={<SignalHistory />} />
+              <Route path="/paper-trading" element={<PaperTrading />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
           </Routes>
-        </div>
-      </AuthProvider>
-    </Router>
+        </AuthProvider>
+      </Router>
+    </ThemeProvider>
   );
 }
 

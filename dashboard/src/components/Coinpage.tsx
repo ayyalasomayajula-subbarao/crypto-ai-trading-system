@@ -1,15 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import PriceChart from './PriceChart';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/supabase';
 import './Coinpage.css';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-const WS_URL = process.env.REACT_APP_WS_URL || (
-  API_BASE ? API_BASE.replace(/^http/, 'ws') + '/ws/prices' : `ws://${window.location.host}/ws/prices`
-);
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
+const WS_URL = process.env.REACT_APP_WS_URL || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/prices`;
 
 // ============================================================
 // TYPES
@@ -405,7 +403,6 @@ const Tooltip: React.FC<{ text: string; children: React.ReactNode }> = ({ text, 
 
 const CoinPage: React.FC = () => {
   const { coinId } = useParams<{ coinId: string }>();
-  const navigate = useNavigate();
   const { user } = useAuth();
   const coin = coinId?.toUpperCase() || 'BTC_USDT';
   const coinConfig = COIN_CONFIG[coin] || COIN_CONFIG['BTC_USDT'];
@@ -629,6 +626,7 @@ const CoinPage: React.FC = () => {
     if (capital && capital > 0) {
       fetchAnalysis();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coin]); // Only on coin change, not on every input change
 
   // ============================================================
@@ -688,9 +686,6 @@ const CoinPage: React.FC = () => {
     <div className="coin-page">
       {/* Header */}
       <header className="coin-header">
-        <button className="back-btn" onClick={() => navigate('/')}>
-          ← Back to Dashboard
-        </button>
         <div className="coin-title">
           <span className="coin-icon" style={{ color: coinConfig.color }}>{coinConfig.icon}</span>
           <div>
