@@ -92,6 +92,7 @@ const Dashboard: React.FC = () => {
   const [wsConnected, setWsConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
+  const [signalsLoaded, setSignalsLoaded] = useState(false);
 
   // Portfolio with current prices
   const [portfolioWithPrices, setPortfolioWithPrices] = useState<PortfolioHoldingWithPrice[]>([]);
@@ -202,8 +203,10 @@ const Dashboard: React.FC = () => {
       setSignals(response.data.signals);
       setMarketSummary(response.data.market_summary);
       setLastUpdate(new Date());
+      setSignalsLoaded(true);
     } catch (error) {
       console.error('Error fetching signals:', error);
+      setSignalsLoaded(true); // Don't block UI if signals fail
     }
   }, []);
 
@@ -407,8 +410,8 @@ const Dashboard: React.FC = () => {
   // RENDER
   // ============================================================
 
-  // Show loading screen until WebSocket connects and initial data is loaded
-  if (!initialDataLoaded) {
+  // Show loading screen until prices AND signals are loaded
+  if (!initialDataLoaded || !signalsLoaded) {
     return (
       <div className="dashboard loading-screen">
         <div className="loading-content">
@@ -420,7 +423,7 @@ const Dashboard: React.FC = () => {
           <p className="loading-text">Connecting to live markets...</p>
           <div className="loading-status">
             <span className={`status-dot ${wsConnected ? 'connected' : ''}`}></span>
-            <span>{wsConnected ? 'Connected, loading prices...' : 'Establishing connection...'}</span>
+            <span>{!wsConnected ? 'Establishing connection...' : !initialDataLoaded ? 'Loading prices...' : 'Loading market signals...'}</span>
           </div>
         </div>
       </div>
@@ -433,7 +436,7 @@ const Dashboard: React.FC = () => {
       <header className="header">
         <div className="header-left">
           <h1>🤖 TradeWise Trading</h1>
-          <span className="version">v5.0</span>
+          <span className="version">v7.0</span>
         </div>
         <div className="header-right">
           <span className={`ws-status ${wsConnected ? 'connected' : 'disconnected'}`}>
