@@ -21,3 +21,4 @@ httpx>=0.27.0
 # AI providers
 groq>=0.11.0
 openai>=1.51.0
+# DeepSeek uses the openai SDK with a custom base_url — no extra package needed

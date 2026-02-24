@@ -1,6 +1,6 @@
-# Crypto AI Trading System v7.1
+# Crypto AI Trading System v7.2
 
-A full-stack crypto trading intelligence platform with ML predictions, AI-powered analysis, paper trading, backtesting, and real-time market data.
+A full-stack crypto trading intelligence platform with ML predictions, AI-powered analysis, multi-LLM consensus chat, paper trading, backtesting, and real-time market data.
 
 ## User Flow
 
@@ -46,9 +46,19 @@ Click any coin for the full analysis breakdown:
 - **Scenario Engine** — Warns about FOMO, losing streaks, overtrading, BTC crashes
 - **Investment Requirements** — Shows which conditions are met/unmet for your trade type
 - **Price Forecast** — Upside/sideways/downside probabilities with bull/bear targets
-- **AI Analysis** — Click "Run Deep Analysis" for Groq/OpenAI-powered insights including TLDR, risks, entry strategy
+- **AI Analysis** — Click "Run Deep Analysis" for Groq-powered insights including TLDR, risks, entry strategy
 
-### 6. Paper Trading
+### 6. AI Trading Chat (NEW in v7.2)
+Context-aware trading advisor accessible from any coin page:
+
+- **Time Horizon Chips** — Select SCALP / SHORT / SWING / INVEST before querying; AI prompts you if not set
+- **Capital Input** — Enter your position size for personalized sizing advice
+- **Multi-LLM Consensus** — Groq (Llama 3.3 70B) + Qwen3-32B run in parallel; a dedicated Groq judge resolves disagreements
+- **Rich Response Cards** — Verdict + confidence, market bias, BTC environment tag, multi-timeframe alignment grid, key support/resistance/invalidation levels, stop loss, targets with probabilities, scenario bars, position sizing, news sentiment
+- **Auto Data Fetch** — Chat endpoint pulls live prices, multi-timeframe CSVs, and news independently — no manual context needed
+- **Consensus Badge** — Shows `CONSENSUS HIGH` when both models agree, `MEDIUM` when judge arbitrated
+
+### 7. Paper Trading
 The automated paper trading bot runs 24/7 on your server:
 
 - **Start/Stop** — Set your capital and start the bot
@@ -59,14 +69,14 @@ The automated paper trading bot runs 24/7 on your server:
 - **Day Counter** — Progress toward the 45-day validation target
 - The bot uses frozen walk-forward validated models — no parameter changes during the test
 
-### 7. Backtest
+### 8. Backtest
 Test trading strategies against historical data:
 
 - Select a coin and time period
 - See results: total return, win rate, profit factor, max drawdown, trade count
 - Compare different strategies and parameter settings
 
-### 8. Settings
+### 9. Settings
 Manage your profile and account preferences.
 
 ## Features
@@ -78,6 +88,14 @@ Manage your profile and account preferences.
 - **Experience-Level Adjustments** — BEGINNER, INTERMEDIATE, ADVANCED modify required probabilities
 - **Scenario Engine** — Detects FOMO, losing streaks, overtrading, BTC crashes, extreme volatility
 - **Position Sizing** — Kelly Criterion + ATR-based stop loss/take profit
+
+### AI Trading Chat (NEW in v7.2)
+- **Multi-LLM Consensus** — Groq (Llama 3.3 70B) + Qwen3-32B run in parallel; dedicated Groq judge key arbitrates on disagreement
+- **Three-tier fallback** — DeepSeek API → Qwen3-32B on Groq
+- **Rich structured responses** — Timeframe alignment grid, key levels, BTC environment, position sizing, scenario probabilities
+- **Time horizon + capital aware** — `INPUT_REQUIRED` flow prompts inline if horizon not set; auto-resubmits without duplicate messages
+- **`<think>` token stripping** — Qwen3-32B reasoning tokens stripped before JSON parsing
+- **Separate rate-limit pools** — `GROQ_API_KEY` for primary+second-opinion, `GROQ_JUDGE_API_KEY` for judge
 
 ### MUI Sidebar Layout (NEW in v7.1)
 - **Persistent Sidebar** — Material UI drawer with Overview, Portfolio, Coins, Backtest, Signals, Paper Trading navigation
@@ -103,10 +121,11 @@ Manage your profile and account preferences.
 - **Rolling Robustness** — Verify strategy stability across multiple time periods
 
 ### AI-Powered Insights
-- **Groq** (Llama 3.3 70B) as primary
-- **OpenAI** (GPT-3.5-turbo) as fallback
+- **Groq** (Llama 3.3 70B) as primary analyst
+- **Qwen3-32B** on Groq as second opinion (DeepSeek API when credits available)
+- **Groq Judge** (dedicated key) arbitrates on disagreement — fully free, no OpenAI dependency
 - Cross-references technicals, volume, sentiment, derivatives, news, and whale data
-- Returns: TLDR, positives/risks with severity, market pulse, entry strategy, conviction reason
+- Returns: verdict + confidence, timeframe alignment, key levels, market bias, BTC environment, stop loss, targets, position sizing, scenarios
 
 ### Interactive Price Charts
 - **TradingView lightweight-charts** — professional candlestick and area charts
@@ -148,7 +167,7 @@ Manage your profile and account preferences.
 | Frontend | React 19, TypeScript, MUI 6 |
 | Charts | TradingView lightweight-charts |
 | Auth | Supabase |
-| AI | Groq (free), OpenAI (fallback) |
+| AI | Groq (primary + judge), Qwen3-32B/Groq (second opinion), DeepSeek (optional) |
 | Data | Binance API, Blockchair, alternative.me, RSS feeds |
 | Deployment | AWS EC2 (eu-north-1) |
 
@@ -165,8 +184,10 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Create .env with:
-# GROQ_API_KEY=your_key_here (free at console.groq.com)
-# OPENAI_API_KEY=your_key_here (optional fallback)
+# GROQ_API_KEY=your_key_here        (free at console.groq.com — primary + second opinion)
+# GROQ_JUDGE_API_KEY=your_key_here  (second Groq key — dedicated judge pool)
+# DEEPSEEK_API_KEY=your_key_here    (optional — falls back to Qwen3-32B on Groq)
+# OPENAI_API_KEY=your_key_here      (optional — for /ai-analysis endpoint only)
 
 python api_final.py
 # Runs on http://localhost:8000
@@ -208,6 +229,7 @@ npm run build
 | `GET /news/geopolitical` | Geopolitical news impact |
 | `GET /fear-greed` | Fear & Greed Index |
 | `GET /ai-status` | AI provider availability |
+| `POST /chat/{coin}` | AI Trading Chat — multi-LLM consensus (body: `message`, `time_horizon`, `capital`, `chat_history`) |
 | `POST /paper-trading/start` | Start paper trading (optional `capital` param) |
 | `POST /paper-trading/stop` | Stop paper trading |
 | `GET /paper-trading/status` | Current status, equity, open positions |
@@ -251,6 +273,8 @@ crypto-ai-system/
         │   │   └── TopBar.tsx    # Mobile hamburger + Live indicator
         │   ├── Dashboard.tsx     # Overview: signals grid + news
         │   ├── Coinpage.tsx      # Per-coin analysis page
+        │   ├── TradingChat.tsx   # AI Trading Chat (multi-LLM consensus)
+        │   ├── TradingChat.css   # Chat UI styles
         │   ├── PaperTrading.tsx  # Paper trading monitor
         │   ├── Backtest.tsx      # Backtesting UI
         │   ├── SignalHistory.tsx  # Signal history
@@ -265,6 +289,7 @@ crypto-ai-system/
 ## Version History
 | Version | Highlights |
 |---------|-----------|
+| **v7.2** | AI Trading Chat with multi-LLM consensus (Groq + Qwen3-32B + dedicated Groq judge), time horizon/capital input, rich response cards, DeepSeek fallback chain |
 | **v7.1** | MUI sidebar layout, dedicated Portfolio/Coins/Settings pages, pinned Python dependencies, prod/local model sync |
 | **v7.0** | Paper trading engine, backtesting, walk-forward validation, EC2 deployment, dynamic API URLs |
 | **v6.0** | Groq/OpenAI AI analysis, derivatives intelligence, whale tracking, interactive charts, tooltips |
