@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { createChart, ColorType, LineSeries } from 'lightweight-charts';
 import type { IChartApi, LineData, Time } from 'lightweight-charts';
 import axios from 'axios';
 import './PaperTrading.css';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
 interface PaperStatus {
   running: boolean;
@@ -76,7 +75,6 @@ const formatPrice = (p: number): string => {
 };
 
 const PaperTrading: React.FC = () => {
-  const navigate = useNavigate();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -236,7 +234,6 @@ const PaperTrading: React.FC = () => {
               {actionLoading ? 'Stopping...' : 'Stop Trading'}
             </button>
           )}
-          <button className="back-btn" onClick={() => navigate('/')}>Dashboard</button>
         </div>
       </div>
 

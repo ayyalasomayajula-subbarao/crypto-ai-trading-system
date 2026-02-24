@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './NewsFeed.css';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
 interface NewsItem {
   title: string;
@@ -164,6 +164,11 @@ const NewsFeed: React.FC = () => {
     return badges;
   };
 
+  const stripHtml = (html: string): string => {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    return doc.body.textContent || '';
+  };
+
   const filteredNews = getFilteredNews();
   const totalCount = getAllNews().length;
 
@@ -234,7 +239,7 @@ const NewsFeed: React.FC = () => {
             <div className="card-body">
               <h3 className="card-title">{item.title}</h3>
               {item.description && (
-                <p className="card-description">{item.description}</p>
+                <p className="card-description">{stripHtml(item.description)}</p>
               )}
               <div className="card-footer">
                 <span className="card-source">{item.source}</span>

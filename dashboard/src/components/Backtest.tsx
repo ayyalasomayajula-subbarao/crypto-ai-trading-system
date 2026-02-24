@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import { createChart, ColorType, LineSeries } from 'lightweight-charts';
 import type { IChartApi, LineData, Time } from 'lightweight-charts';
 import axios from 'axios';
 import './Backtest.css';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
 const formatPrice = (p: number): string => {
   if (p === 0) return '$0';
@@ -174,7 +174,6 @@ interface MonteCarloResult {
 }
 
 const Backtest: React.FC = () => {
-  const navigate = useNavigate();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -345,14 +344,7 @@ const Backtest: React.FC = () => {
 
   return (
     <div className="backtest-page">
-      {/* Header */}
-      <header className="backtest-header">
-        <div className="header-left">
-          <button className="back-btn" onClick={() => navigate('/')}>Back</button>
-          <h1>Backtesting Engine</h1>
-          <span className="version">Walk-Forward Validation</span>
-        </div>
-      </header>
+      <h2 style={{ color: '#e2e8f0', marginBottom: 16 }}>Backtesting Engine</h2>
 
       {/* Controls */}
       <div className="backtest-controls">

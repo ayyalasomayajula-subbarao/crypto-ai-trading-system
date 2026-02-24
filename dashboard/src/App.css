@@ -1,25 +1,4 @@
-/* App.css */
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
-  background: #0a0e17;
-  color: #e2e8f0;
-  min-height: 100vh;
-}
-
-.App {
-  min-height: 100vh;
-}
-
-/* Smooth scrolling */
-html {
-  scroll-behavior: smooth;
-}
+/* App.css — MUI CssBaseline handles body/background/font */
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {

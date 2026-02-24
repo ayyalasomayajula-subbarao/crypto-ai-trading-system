@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { db, TradeSignal, SignalStats } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import './SignalHistory.css';
@@ -12,7 +11,6 @@ const COIN_CONFIG: Record<string, { icon: string; name: string; color: string }>
 };
 
 const SignalHistory: React.FC = () => {
-  const navigate = useNavigate();
   const { user } = useAuth();
 
   const [signals, setSignals] = useState<TradeSignal[]>([]);
@@ -56,14 +54,7 @@ const SignalHistory: React.FC = () => {
 
   return (
     <div className="signal-history-page">
-      {/* Header */}
-      <header className="signal-header">
-        <div className="header-left">
-          <button className="back-btn" onClick={() => navigate('/')}>Back</button>
-          <h1>Signal History</h1>
-          <span className="version">Prediction Tracking</span>
-        </div>
-      </header>
+      <h2 style={{ color: '#e2e8f0', marginBottom: 16 }}>Signal History</h2>
 
       {/* Stats Summary */}
       <div className="stats-section">
