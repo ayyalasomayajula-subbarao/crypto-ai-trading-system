@@ -32,10 +32,19 @@ const TIMEFRAMES = [
   { label: 'ALL', interval: '1w', limit: 500 },
 ];
 
+const getPriceFormat = (coin: string) => {
+  const upper = coin.toUpperCase();
+  if (upper.includes('PEPE') || upper.includes('SHIB') || upper.includes('FLOKI')) {
+    return { type: 'price' as const, precision: 8, minMove: 0.00000001 };
+  }
+  return undefined;
+};
+
 const PriceChart: React.FC<PriceChartProps> = ({ coin, coinColor }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | ISeriesApi<'Area'> | null>(null);
+  const klineWsRef = useRef<WebSocket | null>(null);
   const [activeTimeframe, setActiveTimeframe] = useState(4); // Default 7D
   const [chartType, setChartType] = useState<'area' | 'candlestick'>('area');
   const [loading, setLoading] = useState(false);
@@ -72,6 +81,59 @@ const PriceChart: React.FC<PriceChartProps> = ({ coin, coinColor }) => {
     }
   }, [coin]);
 
+  // Connect to Binance kline WebSocket for live candle updates
+  const connectKlineWs = useCallback((interval: string) => {
+    if (klineWsRef.current) {
+      klineWsRef.current.close();
+      klineWsRef.current = null;
+    }
+
+    const symbol = coin.replace('_', '').toLowerCase();
+    const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${symbol}@kline_${interval}`);
+
+    ws.onmessage = (event) => {
+      if (!seriesRef.current) return;
+      const msg = JSON.parse(event.data);
+      const k = msg.k;
+      if (!k) return;
+
+      const bar = {
+        time: Math.floor(k.t / 1000) as Time,
+        open: parseFloat(k.o),
+        high: parseFloat(k.h),
+        low: parseFloat(k.l),
+        close: parseFloat(k.c),
+      };
+
+      try {
+        if (chartType === 'candlestick') {
+          (seriesRef.current as ISeriesApi<'Candlestick'>).update(bar as CandlestickData<Time>);
+        } else {
+          (seriesRef.current as ISeriesApi<'Area'>).update({
+            time: bar.time,
+            value: bar.close,
+          } as AreaData<Time>);
+        }
+        setPriceInfo(prev => prev
+          ? { ...prev, price: bar.close }
+          : null
+        );
+      } catch {
+        // series may not be ready yet
+      }
+    };
+
+    ws.onerror = () => ws.close();
+    ws.onclose = () => {
+      // Reconnect after 3s if component still mounted
+      setTimeout(() => {
+        if (klineWsRef.current === ws) connectKlineWs(interval);
+      }, 3000);
+    };
+
+    klineWsRef.current = ws;
+  }, [coin, chartType]);
+
   // Create and update chart
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -84,6 +146,8 @@ const PriceChart: React.FC<PriceChartProps> = ({ coin, coinColor }) => {
     }
 
     const container = chartContainerRef.current;
+    const tf = TIMEFRAMES[activeTimeframe];
+    const priceFormat = getPriceFormat(coin);
 
     const chart = createChart(container, {
       layout: {
@@ -115,8 +179,6 @@ const PriceChart: React.FC<PriceChartProps> = ({ coin, coinColor }) => {
 
     chartRef.current = chart;
 
-    // Add series based on chart type
-    const tf = TIMEFRAMES[activeTimeframe];
     fetchData(tf).then((data) => {
       if (!chartRef.current || data.length === 0) return;
 
@@ -128,6 +190,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ coin, coinColor }) => {
           borderDownColor: '#ff5252',
           wickUpColor: '#00e676',
           wickDownColor: '#ff5252',
+          priceFormat,
         });
         const candleData: CandlestickData<Time>[] = data.map(d => ({
           time: d.time as Time,
@@ -146,6 +209,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ coin, coinColor }) => {
           lineWidth: 2,
           crosshairMarkerVisible: true,
           crosshairMarkerRadius: 4,
+          priceFormat,
         });
         const areaData: AreaData<Time>[] = data.map(d => ({
           time: d.time as Time,
@@ -156,6 +220,9 @@ const PriceChart: React.FC<PriceChartProps> = ({ coin, coinColor }) => {
       }
 
       chart.timeScale().fitContent();
+
+      // Start live kline WebSocket after chart is ready
+      connectKlineWs(tf.interval);
     });
 
     // Responsive resize
@@ -171,13 +238,17 @@ const PriceChart: React.FC<PriceChartProps> = ({ coin, coinColor }) => {
 
     return () => {
       resizeObserver.disconnect();
+      if (klineWsRef.current) {
+        klineWsRef.current.close();
+        klineWsRef.current = null;
+      }
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
         seriesRef.current = null;
       }
     };
-  }, [coin, activeTimeframe, chartType, coinColor, fetchData]);
+  }, [coin, activeTimeframe, chartType, coinColor, fetchData, connectKlineWs]);
 
   const handleTimeframeChange = (index: number) => {
     setActiveTimeframe(index);

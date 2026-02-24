@@ -75,21 +75,14 @@ const Dashboard: React.FC = () => {
   const [signalsLoaded, setSignalsLoaded] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const priceBufferRef = useRef<Record<string, PriceData>>({});
-  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // ============================================================
-  // WEBSOCKET (throttled updates to prevent jitter)
+  // WEBSOCKET
   // ============================================================
   useEffect(() => {
-    const flushPriceUpdates = () => {
-      if (Object.keys(priceBufferRef.current).length > 0) {
-        setPrices(prev => ({ ...prev, ...priceBufferRef.current }));
-        priceBufferRef.current = {};
-      }
-    };
-
     const connectWebSocket = () => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+
       const ws = new WebSocket(WS_URL);
 
       ws.onopen = () => {
@@ -103,13 +96,7 @@ const Dashboard: React.FC = () => {
           setPrices(data.prices);
           setInitialDataLoaded(true);
         } else if (data.type === 'price_update') {
-          priceBufferRef.current[data.coin] = data.data;
-          if (!updateTimeoutRef.current) {
-            updateTimeoutRef.current = setTimeout(() => {
-              flushPriceUpdates();
-              updateTimeoutRef.current = null;
-            }, 500);
-          }
+          setPrices(prev => ({ ...prev, [data.coin]: data.data }));
         }
       };
 
@@ -122,10 +109,17 @@ const Dashboard: React.FC = () => {
       wsRef.current = ws;
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        connectWebSocket();
+      }
+    };
+
     connectWebSocket();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (wsRef.current) wsRef.current.close();
-      if (updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -204,9 +198,6 @@ const Dashboard: React.FC = () => {
 
       {/* Main Content */}
       <div className="content content-full">
-          <h3>📊 Live Prices & Signals</h3>
-          <p className="panel-subtitle">Click a coin for detailed analysis</p>
-
           <div className="signals-grid">
             {['BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'PEPE_USDT'].map(coin => {
               const priceData = prices[coin];

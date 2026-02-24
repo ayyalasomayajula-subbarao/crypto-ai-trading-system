@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import PriceChart from './PriceChart';
+import TradingChat from './TradingChat';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/supabase';
 import './Coinpage.css';
@@ -445,6 +446,8 @@ const CoinPage: React.FC = () => {
   // ============================================================
   useEffect(() => {
     const connectWebSocket = () => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+
       const ws = new WebSocket(WS_URL);
 
       ws.onopen = () => {
@@ -468,8 +471,16 @@ const CoinPage: React.FC = () => {
       wsRef.current = ws;
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        connectWebSocket();
+      }
+    };
+
     connectWebSocket();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (wsRef.current) wsRef.current.close();
     };
   }, [coin]);
@@ -2018,6 +2029,13 @@ const CoinPage: React.FC = () => {
               <p>Click "Run Full Analysis" to get started</p>
             </div>
           )}
+
+          {/* AI Trading Chat — always visible once on coin page */}
+          <TradingChat
+            coin={coin || ''}
+            analysis={analysis as Record<string, unknown> | null}
+            currentPrice={price?.price}
+          />
         </main>
       </div>
     </div>

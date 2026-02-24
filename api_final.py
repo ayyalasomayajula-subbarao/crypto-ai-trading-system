@@ -25,9 +25,33 @@ import json
 import requests
 from dotenv import load_dotenv
 from ta.volume import OnBalanceVolumeIndicator, MFIIndicator, ForceIndexIndicator
+import time as _time
 
 # Load environment variables
 load_dotenv()
+
+# ============================================================
+# IN-MEMORY TTL CACHE
+# ============================================================
+class TTLCache:
+    """Simple in-memory cache with per-key TTL (seconds)."""
+    def __init__(self):
+        self._store: Dict[str, tuple] = {}  # key -> (value, expires_at)
+
+    def get(self, key: str):
+        entry = self._store.get(key)
+        if entry and _time.monotonic() < entry[1]:
+            return entry[0]
+        self._store.pop(key, None)
+        return None
+
+    def set(self, key: str, value, ttl: int):
+        self._store[key] = (value, _time.monotonic() + ttl)
+
+    def delete(self, key: str):
+        self._store.pop(key, None)
+
+cache = TTLCache()
 
 # ============================================================
 # AI SERVICE (Groq FREE + OpenAI Fallback)
@@ -422,6 +446,575 @@ Respond with ONLY valid JSON (no markdown, no code blocks) in this exact format:
 
 # Global AI service (initialized at startup)
 ai_service = None
+
+# ============================================================
+# TRADING CHAT SERVICE — Parallel Consensus Multi-LLM
+# ============================================================
+
+CHAT_SYSTEM_PROMPT = """You are a professional crypto market analyst, liquidity-based trader, and risk-first advisor.
+Persona: Direct, critical, precise, unemotional. Capital preservation over profits. No soft language. No disclaimers. No hedging.
+
+━━━ ASSET TIERS ━━━
+Tier 1 (BTC, ETH): Investing valid. Stop at major structure breakdown only (-25% to -35%).
+Tier 2 (SOL, AVAX, MATIC, major L1s): Swing/investing valid. Stop at structure breakdown (-15% to -25%).
+Tier 3 MEME (PEPE, DOGE, SHIB, FLOKI, BONK): TRADE ONLY — never invest. Hard stop -25% from entry. Take profit at +50-100%.
+Tier 4 (low-cap, anon teams): Avoid.
+
+━━━ BITCOIN GATEKEEPER ━━━
+BTC > $95K: Bullish for altcoins. | BTC $90-95K: Caution. | BTC < $90K: High risk altcoin longs.
+BTC < $85K: No new longs. WAIT or exit only.
+
+━━━ TIMEFRAME ANALYSIS (substitute for chart images) ━━━
+You will receive multi-timeframe data (1H, 4H, 1D, 1W structure). Use it exactly as you would chart images.
+Priority: Higher timeframe sets the trend direction. Lower timeframe is for entry precision only.
+Conflict rule: If 1D bearish but 1H bouncing → macro bias = BEARISH, bounce = counter-trend. Reduce confidence -20%.
+Confidence boost: All timeframes aligned = +15%. Mixed = -20%.
+
+━━━ STOP LOSS FRAMEWORK ━━━
+Scalp/Short: 2-5% below execution swing low. Swing: 5-10% below key support. Investing T1/T2: Major structure invalidation only. Meme: Hard -25% from entry, no exceptions.
+
+━━━ TAKE PROFIT ━━━
+T1: Exit 50% at first resistance. T2: Exit 30% at second resistance. Runner: 20% with trailing stop. Scale out — never hold 100% to top.
+
+━━━ POSITION RULES ━━━
+Never average down unless: investing horizon + T1/T2 asset + at major support + won't exceed 15% portfolio. Add to winners only if +5% and structure confirms continuation.
+
+━━━ VERDICT OPTIONS ━━━
+BUY | HOLD | SELL | EXIT | WAIT | ADD
+WAIT requires: a specific condition stated ("Wait for daily close above X with volume").
+
+━━━ RESPONSE RULES ━━━
+1. Think beyond the page data — use timeframe structure, BTC gatekeeper, volume, liquidity, and news to form independent judgment.
+2. ALWAYS output valid JSON only. No markdown. No prose outside JSON.
+3. Reference exact prices/percentages from context in every field. Zero vague language.
+4. One definitive action. Never give two options without a condition.
+
+━━━ IF time_horizon IS MISSING → OUTPUT THIS EXACTLY ━━━
+{"status":"INPUT_REQUIRED","message":"Provide your time horizon to proceed.","required_fields":["time_horizon (scalp | short | swing | investing)"],"optional_fields":["avg_buy_price","capital_usd"]}
+
+━━━ IF ALL KEY INPUTS PRESENT → OUTPUT ANALYSIS_COMPLETE ━━━
+{
+  "status": "ANALYSIS_COMPLETE",
+  "asset_classification": {"tier": "...", "investing_valid": true/false},
+  "timeframe_alignment": {"1H": "...", "4H": "...", "1D": "...", "1W": "...", "alignment": "...", "confidence_delta": "+15% or -20%"},
+  "market_bias": "Bearish | Bullish | Neutral — 1 sentence with data",
+  "weekly_momentum": {"structure": "HH/HL or LH/LL", "status": "...", "red_flags": ["..."]},
+  "volume_analysis": "1 sentence on volume vs average and what it means",
+  "liquidity_analysis": {"swept_levels": "...", "buy_side_above": "...", "sell_side_below": "..."},
+  "key_levels": {"major_support": "...", "major_resistance": "...", "invalidation": "..."},
+  "bitcoin_influence": {"btc_price": 0, "environment": "...", "impact_on_trade": "..."},
+  "news_sentiment": "1 sentence on relevant news impact",
+  "scenario_probabilities": {"bullish": 30, "neutral": 40, "bearish": 30},
+  "decision": "HOLD",
+  "execution_plan": {"current_status": "...", "action": "...", "reasoning": "specific data-backed reasoning"},
+  "stop_loss": {"price": "exact", "reasoning": "why this level"},
+  "targets": [
+    {"label": "T1", "price": "...", "probability": "35%", "action": "Exit 50%"},
+    {"label": "T2", "price": "...", "probability": "20%", "action": "Exit 30%"},
+    {"label": "Runner", "price": "...", "probability": "10%", "action": "Trail stop 20%"}
+  ],
+  "position_sizing": {"deploy_now_usd": 0, "add_condition": "..."},
+  "risk_assessment": {"primary_risk": "...", "secondary_risk": "...", "invalid_action": "..."},
+  "confidence_score": 72,
+  "confidence": "MEDIUM",
+  "warning": "Optional — only if critical risk or time horizon mismatch detected",
+  "time_review": "Re-assess on next weekly close / after BTC stabilizes above $X"
+}"""
+
+
+class TradingChatService:
+    def __init__(self):
+        self.groq_client       = None
+        self.groq_judge_client = None
+        self.deepseek_client   = None
+        self.openai_client     = None
+        self.groq_available      = False
+        self.groq_judge_available = False
+        self.deepseek_available  = False
+        self.openai_available    = False
+
+        print("\n[TradingChat] Initializing AI providers...", flush=True)
+
+        # ── Groq (primary, free) ──────────────────────────────────────────────
+        groq_key = os.getenv('GROQ_API_KEY', '')
+        if groq_key and groq_key not in ('', 'gsk_your_groq_key_here'):
+            try:
+                from groq import Groq
+                self.groq_client = Groq(api_key=groq_key)
+                self.groq_available = True
+                print("  [TradingChat] Groq:     Ready (llama-3.3-70b)", flush=True)
+            except Exception as e:
+                print(f"  [TradingChat] Groq:     Failed — {e}", flush=True)
+        else:
+            print("  [TradingChat] Groq:     No API key", flush=True)
+
+        # ── Groq Judge (dedicated key — separate rate-limit pool) ─────────────
+        judge_key = os.getenv('GROQ_JUDGE_API_KEY', '')
+        if judge_key and judge_key not in ('', 'gsk_your_groq_key_here'):
+            try:
+                from groq import Groq
+                self.groq_judge_client = Groq(api_key=judge_key)
+                self.groq_judge_available = True
+                print("  [TradingChat] Groq Judge: Ready (dedicated key)", flush=True)
+            except Exception as e:
+                print(f"  [TradingChat] Groq Judge: Failed — {e}", flush=True)
+        elif self.groq_available:
+            # Fall back to same key if no dedicated judge key
+            self.groq_judge_client = self.groq_client
+            self.groq_judge_available = True
+            print("  [TradingChat] Groq Judge: Using primary Groq key (no dedicated key set)", flush=True)
+        else:
+            print("  [TradingChat] Groq Judge: Unavailable", flush=True)
+
+        # ── DeepSeek (second opinion) ─────────────────────────────────────────
+        # Primary: DeepSeek API (platform.deepseek.com)
+        # Fallback: DeepSeek-R1 distilled on Groq (always free via same GROQ_API_KEY)
+        deepseek_key = os.getenv('DEEPSEEK_API_KEY', '')
+        if deepseek_key and deepseek_key not in ('', 'your_deepseek_key_here'):
+            try:
+                from openai import OpenAI
+                self.deepseek_client = OpenAI(
+                    api_key=deepseek_key,
+                    base_url='https://api.deepseek.com'
+                )
+                print("  [TradingChat] DeepSeek: API key loaded (deepseek-chat V3)", flush=True)
+            except Exception as e:
+                print(f"  [TradingChat] DeepSeek: API init failed — {e}", flush=True)
+        # DeepSeek-R1 on Groq is always available if Groq key exists (no separate key needed)
+        if self.groq_available:
+            self.deepseek_available = True
+            label = "deepseek-chat + fallback Qwen3-32B/Groq" if self.deepseek_client else "Qwen3-32B via Groq (free)"
+            print(f"  [TradingChat] DeepSeek: Ready ({label})", flush=True)
+        else:
+            print("  [TradingChat] DeepSeek: Unavailable (needs Groq key as fallback)", flush=True)
+
+        # ── OpenAI (unused — judge replaced by Groq) ─────────────────────────
+        # Judge is now handled by _call_judge() using Groq (free, no quota issues)
+        self.openai_available = False
+
+    def _classify_asset(self, coin: str) -> str:
+        upper = coin.upper()
+        if any(x in upper for x in ['PEPE', 'DOGE', 'SHIB', 'FLOKI', 'BONK', 'WIF', 'MEME']):
+            return "Tier 3 - Meme Speculation (TRADE ONLY, never invest)"
+        if any(x in upper for x in ['BTC', 'ETH']):
+            return "Tier 1 - Bluechip (investing valid)"
+        if any(x in upper for x in ['SOL', 'AVAX', 'MATIC', 'ATOM', 'DOT', 'LINK', 'ADA', 'NEAR']):
+            return "Tier 2 - Major Altcoin (swing/investing valid with stops)"
+        return "Tier 2/3 - Altcoin (trade or swing)"
+
+    def _get_multitf_context(self, coin: str) -> str:
+        """Generate multi-timeframe price structure from CSV files — substitutes chart images."""
+        ctx = "\n\n=== MULTI-TIMEFRAME CHART DATA (substitutes for chart images) ==="
+        base = coin.upper().replace('_USDT', '').replace('_', '')
+        usdt = f"{base}_USDT"
+
+        tf_files = [
+            ('1H',  [f'data/{usdt}_1h.csv', f'data/{base}USDT_1h.csv'],  48),
+            ('4H',  [f'data/{usdt}_4h.csv', f'data/{base}USDT_4h.csv'],  42),
+            ('1D',  [f'data/{usdt}_1d.csv', f'data/{base}USDT_1d.csv'],  30),
+            ('1W',  [f'data/{usdt}_1w.csv', f'data/{base}USDT_1w.csv'],  12),
+        ]
+
+        found_any = False
+        for tf_name, paths, lookback in tf_files:
+            df = None
+            for p in paths:
+                try:
+                    df = pd.read_csv(p)
+                    break
+                except Exception:
+                    continue
+            if df is None or len(df) < 5:
+                ctx += f"\n{tf_name}: No data available"
+                continue
+
+            df = df.tail(lookback).reset_index(drop=True)
+            close_col = 'close' if 'close' in df.columns else df.columns[-1]
+            high_col  = 'high'  if 'high'  in df.columns else close_col
+            low_col   = 'low'   if 'low'   in df.columns else close_col
+
+            closes = df[close_col].values
+            highs  = df[high_col].values
+            lows   = df[low_col].values
+            n = len(closes)
+            mid = n // 2
+
+            recent_high = highs.max()
+            recent_low  = lows.min()
+            current     = closes[-1]
+
+            first_half_high = highs[:mid].max()
+            last_half_high  = highs[mid:].max()
+            first_half_low  = lows[:mid].min()
+            last_half_low   = lows[mid:].min()
+
+            if last_half_high > first_half_high and last_half_low > first_half_low:
+                structure = "HH/HL (Bullish)"
+            elif last_half_high < first_half_high and last_half_low < first_half_low:
+                structure = "LH/LL (Bearish)"
+            else:
+                structure = "Mixed/Consolidation"
+
+            # 7-candle momentum
+            prev7 = closes[-8] if n >= 8 else closes[0]
+            momentum_pct = ((current - prev7) / prev7) * 100 if prev7 != 0 else 0
+
+            pct_from_high = ((current - recent_high) / recent_high) * 100 if recent_high else 0
+            pct_from_low  = ((current - recent_low)  / recent_low)  * 100 if recent_low  else 0
+
+            ctx += (f"\n{tf_name}: {structure} | Range {recent_low:.6g}-{recent_high:.6g}"
+                    f" | Current {current:.6g} | {pct_from_high:.1f}% from high"
+                    f" | {pct_from_low:.1f}% from low | 7-candle momentum: {momentum_pct:+.1f}%")
+            found_any = True
+
+        if not found_any:
+            ctx += "\nNo CSV data loaded — base technical analysis on ML model output."
+        return ctx
+
+    def _get_news_context(self) -> str:
+        """Pull cached news sentiment into context."""
+        news = cache.get("news_data")
+        if not news:
+            return ""
+        sentiment = news.get('market_sentiment', {})
+        headlines = news.get('crypto_news', [])[:4]
+        ctx = (f"\n\n=== NEWS & MARKET SENTIMENT ==="
+               f"\nOverall: {sentiment.get('overall_sentiment','UNKNOWN')} | Score: {sentiment.get('sentiment_score',0)}"
+               f" | Bullish: {sentiment.get('bullish_count',0)} | Bearish: {sentiment.get('bearish_count',0)}"
+               f" | High-Impact: {sentiment.get('high_impact_count',0)}")
+        if headlines:
+            ctx += "\nTop Headlines:"
+            for h in headlines:
+                ctx += f"\n  [{h.get('sentiment','?')}] {h.get('title','')}"
+        return ctx
+
+    def _build_context(self, coin: str, analysis: Dict, entry_price: Optional[float],
+                       capital: Optional[float], time_horizon: Optional[str]) -> str:
+        asset_tier = self._classify_asset(coin)
+
+        # ── Position inputs ──
+        missing = []
+        if not time_horizon:
+            missing.append("time_horizon (scalp | short | swing | investing)")
+
+        ctx = f"=== TRADE INPUTS ===\nAsset: {coin.replace('_','/')} | Classification: {asset_tier}"
+        ctx += f"\nTime Horizon: {time_horizon or 'MISSING — ask user'}"
+        ctx += f"\nCapital Available: ${capital or 'unknown'}"
+
+        if entry_price:
+            price = analysis.get('price', 0) or price_streamer.prices.get(coin, {}).get('price', 0)
+            if price and entry_price:
+                try:
+                    pnl = ((float(price) - float(entry_price)) / float(entry_price)) * 100
+                    ctx += f"\nAvg Buy Price: {entry_price} | Current: {price} | P&L: {pnl:+.2f}%"
+                    if pnl < -25 and 'Tier 3' in asset_tier:
+                        ctx += " ⚠️ EXCEEDS MEME SAFE THRESHOLD"
+                except Exception:
+                    ctx += f"\nAvg Buy Price: {entry_price}"
+        else:
+            ctx += "\nAvg Buy Price: not provided"
+
+        if missing:
+            ctx += f"\n⚠️ MISSING INPUTS: {', '.join(missing)}"
+
+        # ── Live price + BTC ──
+        live_price = price_streamer.prices.get(coin, {}).get('price', 0)
+        btc_price  = price_streamer.prices.get('BTC_USDT', {}).get('price', 0)
+        change_24h = price_streamer.prices.get(coin, {}).get('change_24h', 0)
+
+        ctx += f"\n\n=== LIVE MARKET ==="
+        ctx += f"\nCurrent Price: {live_price or analysis.get('price','?')} | 24H: {change_24h:+.2f}%"
+        if btc_price:
+            ctx += f"\nBTC Price: ${btc_price:,.0f}"
+            if btc_price > 95000:   ctx += " (Altcoin-bullish environment)"
+            elif btc_price > 90000: ctx += " (Neutral — caution)"
+            elif btc_price > 85000: ctx += " (Bearish — high risk for altcoin longs)"
+            else:                   ctx += " (Very bearish — WAIT or exit only)"
+
+        # ── ML model output ──
+        if analysis:
+            verdict    = analysis.get('verdict', '?')
+            win_prob   = analysis.get('win_probability', 0)
+            loss_prob  = analysis.get('loss_probability', 0)
+            sw_prob    = analysis.get('sideways_probability', 0)
+            expectancy = analysis.get('expectancy', 0)
+            ctx += (f"\n\n=== ML MODEL OUTPUT ==="
+                    f"\nVerdict: {verdict} | Win: {win_prob:.1f}% | Loss: {loss_prob:.1f}%"
+                    f" | Sideways: {sw_prob:.1f}% | Expectancy: {expectancy:.1f}%")
+
+            mc     = analysis.get('market_context', {})
+            regime = mc.get('regime', {})
+            if regime:
+                ctx += (f"\nRegime: {regime.get('regime','?')} | Volatility: {regime.get('volatility','?')}"
+                        f" @ {regime.get('volatility_pct',0):.1f}% | ADX: {regime.get('adx',0):.0f}")
+            btc_ctx = mc.get('btc', {})
+            if btc_ctx:
+                ctx += f"\nBTC Influence: Trend={btc_ctx.get('overall_trend','?')} | Dominance={btc_ctx.get('dominance_effect','?')}"
+
+            ta = analysis.get('technical_summary', {})
+            if ta:
+                ctx += (f"\nRSI: {ta.get('rsi',0):.1f} | MACD: {ta.get('macd_signal','?')}"
+                        f" | Trend: {ta.get('trend','?')} | EMA: {ta.get('ema_signal','?')}")
+
+            sr = analysis.get('support_resistance', {})
+            supports     = sr.get('support', [])
+            resistances  = sr.get('resistance', [])
+            if supports:    ctx += f"\nSupports: {', '.join(str(s) for s in supports[:3])}"
+            if resistances: ctx += f"\nResistances: {', '.join(str(r) for r in resistances[:3])}"
+
+            vol = analysis.get('volume_analysis', {})
+            if vol: ctx += f"\nVolume: {vol.get('trend','?')} vs avg: {vol.get('vs_average','?')}"
+
+        # ── Multi-timeframe chart data ──
+        ctx += self._get_multitf_context(coin)
+
+        # ── News ──
+        ctx += self._get_news_context()
+
+        return ctx
+
+    def _parse_response(self, text: str) -> Dict:
+        """Parse structured JSON from AI response, with graceful fallback."""
+        if not text:
+            return {}
+        cleaned = text.strip()
+        # Strip Qwen3 / DeepSeek-R1 thinking tokens <think>...</think>
+        if '<think>' in cleaned:
+            think_end = cleaned.rfind('</think>')
+            if think_end != -1:
+                cleaned = cleaned[think_end + 8:].strip()
+        # Strip markdown code fences
+        if cleaned.startswith('```'):
+            lines = cleaned.split('\n')
+            cleaned = '\n'.join(lines[1:])
+            if cleaned.endswith('```'):
+                cleaned = cleaned[:-3].strip()
+        try:
+            return json.loads(cleaned)
+        except Exception:
+            # Try to extract JSON object
+            start = cleaned.find('{')
+            end = cleaned.rfind('}')
+            if start != -1 and end != -1:
+                try:
+                    return json.loads(cleaned[start:end + 1])
+                except Exception:
+                    pass
+        # Last resort: extract verdict from text
+        upper = text.upper()
+        for v in ["SELL", "EXIT", "BUY", "ADD", "HOLD", "WAIT"]:
+            if v in upper:
+                return {"reasoning": text[:400], "verdict": v, "confidence": "LOW", "confidence_score": 40}
+        return {"reasoning": text[:400], "verdict": None, "confidence": "LOW", "confidence_score": 30}
+
+    async def _call_groq(self, messages: list) -> str:
+        loop = asyncio.get_event_loop()
+        def _sync():
+            resp = self.groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                temperature=0.25,
+                max_tokens=700
+            )
+            return resp.choices[0].message.content
+        return await loop.run_in_executor(None, _sync)
+
+    async def _call_second_opinion(self, messages: list) -> str:
+        """Second opinion: DeepSeek API (if credits) → Qwen3-32B on Groq (always free)."""
+        loop = asyncio.get_event_loop()
+        def _sync():
+            # 1. DeepSeek own API (platform.deepseek.com — add credits to activate)
+            if self.deepseek_client:
+                try:
+                    resp = self.deepseek_client.chat.completions.create(
+                        model="deepseek-chat",
+                        messages=messages,
+                        temperature=0.25,
+                        max_tokens=800,
+                    )
+                    print("  [TradingChat] DeepSeek API OK", flush=True)
+                    return resp.choices[0].message.content
+                except Exception as e:
+                    if '402' in str(e) or 'Insufficient Balance' in str(e):
+                        print("  [TradingChat] DeepSeek: no credits → Qwen3-32B via Groq", flush=True)
+                    else:
+                        print(f"  [TradingChat] DeepSeek API error: {e}", flush=True)
+            # 2. Qwen3-32B on Groq (completely different architecture, always free)
+            if self.groq_client:
+                resp = self.groq_client.chat.completions.create(
+                    model="qwen/qwen3-32b",
+                    messages=messages,
+                    temperature=0.25,
+                    max_tokens=800,
+                )
+                print("  [TradingChat] Qwen3-32B/Groq OK", flush=True)
+                return resp.choices[0].message.content
+            raise RuntimeError("No second opinion provider available")
+        return await loop.run_in_executor(None, _sync)
+
+    async def _call_judge(self, messages: list) -> str:
+        """Judge on disagreement: dedicated Groq key (separate rate-limit pool)."""
+        loop = asyncio.get_event_loop()
+        def _sync():
+            resp = self.groq_judge_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                temperature=0.1,
+                max_tokens=700
+            )
+            return resp.choices[0].message.content
+        return await loop.run_in_executor(None, _sync)
+
+    def _make_response(self, parsed: Dict, providers: list, consensus: bool,
+                       confidence_override: Optional[str] = None) -> Dict:
+        """Merge parsed AI JSON with meta fields, normalizing ANALYSIS_COMPLETE format."""
+        if confidence_override:
+            parsed['confidence'] = confidence_override
+        # ANALYSIS_COMPLETE uses 'decision'; map to 'verdict' for frontend compatibility
+        if 'decision' in parsed and not parsed.get('verdict'):
+            parsed['verdict'] = parsed['decision']
+        # Map execution_plan.reasoning → top-level 'reasoning' for display
+        ep = parsed.get('execution_plan')
+        if isinstance(ep, dict) and not parsed.get('reasoning'):
+            parsed['reasoning'] = ep.get('reasoning') or ep.get('action') or ''
+        # Map position_sizing.add_condition → add_capital_condition
+        ps = parsed.get('position_sizing')
+        if isinstance(ps, dict) and not parsed.get('add_capital_condition'):
+            parsed['add_capital_condition'] = ps.get('add_condition', '')
+        # Map asset_classification.tier → asset_tier (keep full label, not just number)
+        ac = parsed.get('asset_classification')
+        if isinstance(ac, dict) and not parsed.get('asset_tier'):
+            tier_raw = ac.get('tier', '')
+            # Ensure tier includes full label: "Tier 2" → "Tier 2 — Major Altcoin" etc.
+            if tier_raw and not tier_raw.lower().startswith('tier'):
+                tier_raw = f"Tier {tier_raw}"
+            parsed['asset_tier'] = tier_raw
+        # Scrub string "None" / "N/A" / empty values from display fields
+        _none_vals = {'none', 'n/a', 'null', ''}
+        for field in ('add_capital_condition', 'warning', 'news_sentiment',
+                      'time_review', 'market_bias', 'volume_analysis'):
+            val = parsed.get(field)
+            if isinstance(val, str) and val.strip().lower() in _none_vals:
+                parsed[field] = None
+        # Same for nested position_sizing.add_condition
+        if isinstance(parsed.get('position_sizing'), dict):
+            cond = parsed['position_sizing'].get('add_condition', '')
+            if isinstance(cond, str) and cond.strip().lower() in _none_vals:
+                parsed['position_sizing']['add_condition'] = None
+            if parsed.get('add_capital_condition') and \
+               parsed['add_capital_condition'].strip().lower() in _none_vals:
+                parsed['add_capital_condition'] = None
+        parsed['providers_used'] = providers
+        parsed['consensus'] = consensus
+        return parsed
+
+    async def chat(self, coin: str, analysis: Dict, message: str,
+                   history: list, entry_price: Optional[float],
+                   capital: Optional[float] = None,
+                   time_horizon: Optional[str] = None) -> Dict:
+        context = self._build_context(coin, analysis, entry_price, capital, time_horizon)
+        user_content = f"{context}\n\n=== TRADER QUESTION ===\n{message}"
+
+        # Build messages (cap history at 4 exchanges = 8 msgs)
+        recent_history = history[-8:]
+        groq_msgs = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+        for h in recent_history:
+            groq_msgs.append({"role": h["role"], "content": h["content"]})
+        groq_msgs.append({"role": "user", "content": user_content})
+
+        providers_used   = []
+        groq_raw         = None
+        deepseek_raw     = None
+
+        # ── Parallel: Groq + DeepSeek ─────────────────────────────────────────
+        tasks = []
+        if self.groq_available:
+            tasks.append(('groq', self._call_groq(groq_msgs)))
+        if self.deepseek_available:
+            # DeepSeek uses same message format as Groq (OpenAI-compatible)
+            tasks.append(('deepseek', self._call_second_opinion(groq_msgs)))
+
+        if tasks:
+            print(f"  [TradingChat] Calling: {[t[0] for t in tasks]} in parallel", flush=True)
+            results = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
+            for (name, _), result in zip(tasks, results):
+                if isinstance(result, Exception):
+                    print(f"  [TradingChat] {name} ERROR: {type(result).__name__}: {result}", flush=True)
+                    continue
+                if name == 'groq':
+                    groq_raw = result
+                    providers_used.append('Groq')
+                    print(f"  [TradingChat] Groq OK ({len(groq_raw)} chars)", flush=True)
+                elif name == 'deepseek':
+                    deepseek_raw = result
+                    providers_used.append('DeepSeek')
+                    print(f"  [TradingChat] DeepSeek OK ({len(deepseek_raw)} chars)", flush=True)
+
+        # ── Parse responses ───────────────────────────────────────────────────
+        groq_parsed     = self._parse_response(groq_raw)     if groq_raw     else {}
+        deepseek_parsed = self._parse_response(deepseek_raw) if deepseek_raw else {}
+
+        # Models may return 'verdict' (old) or 'decision' (ANALYSIS_COMPLETE) — normalise both
+        groq_verdict     = (groq_parsed.get('verdict')     or groq_parsed.get('decision',     '')).upper() or None
+        deepseek_verdict = (deepseek_parsed.get('verdict') or deepseek_parsed.get('decision', '')).upper() or None
+        print(f"  [TradingChat] Verdicts → Groq={groq_verdict} DeepSeek={deepseek_verdict}", flush=True)
+
+        # ── Consensus check ───────────────────────────────────────────────────
+        if groq_verdict and deepseek_verdict:
+            if groq_verdict == deepseek_verdict:
+                print(f"  [TradingChat] CONSENSUS: both say {groq_verdict} → HIGH", flush=True)
+                return self._make_response(groq_parsed, providers_used, True, 'HIGH')
+            else:
+                print(f"  [TradingChat] DISAGREE: Groq={groq_verdict} DeepSeek={deepseek_verdict} → Groq judge", flush=True)
+                if self.groq_judge_available:
+                    judge_msgs = [
+                        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+                        {"role": "user", "content": (
+                            f"{user_content}\n\n"
+                            f"=== ANALYST OPINIONS ===\n"
+                            f"Analyst A: {groq_raw}\n\n"
+                            f"Analyst B: {deepseek_raw}\n\n"
+                            "They disagree. You are the final arbiter. Give your definitive JSON verdict."
+                        )}
+                    ]
+                    try:
+                        final_raw    = await self._call_judge(judge_msgs)
+                        final_parsed = self._parse_response(final_raw)
+                        providers_used.append('Judge')
+                        print(f"  [TradingChat] Groq judge → {final_parsed.get('verdict') or final_parsed.get('decision','?')}", flush=True)
+                        return self._make_response(final_parsed, providers_used, False, 'MEDIUM')
+                    except Exception as e:
+                        print(f"  [TradingChat] Groq judge error: {e}", flush=True)
+                # No judge — use the model with higher confidence score
+                best = groq_parsed if groq_parsed.get('confidence_score', 0) >= deepseek_parsed.get('confidence_score', 0) else deepseek_parsed
+                return self._make_response(best, providers_used, False, 'MEDIUM')
+
+        # ── Single model available ────────────────────────────────────────────
+        single = groq_parsed or deepseek_parsed
+        if single:
+            return self._make_response(single, providers_used, False, 'MEDIUM')
+
+        # --- Last resort: OpenAI only ---
+        if self.openai_available:
+            try:
+                openai_msgs = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+                for h in recent_history:
+                    openai_msgs.append({"role": h["role"], "content": h["content"]})
+                openai_msgs.append({"role": "user", "content": user_content})
+                raw = await self._call_openai(openai_msgs)
+                providers_used.append('OpenAI')
+                return self._make_response(self._parse_response(raw), providers_used, False)
+            except Exception as e:
+                print(f"  OpenAI chat error: {e}")
+
+        return {
+            "reasoning": "No AI provider available. Configure GROQ_API_KEY, DEEPSEEK_API_KEY, or OPENAI_API_KEY.",
+            "verdict": None, "confidence": "LOW", "confidence_score": 0,
+            "providers_used": [], "consensus": False
+        }
+
+
+trading_chat_service = TradingChatService()
 
 # ============================================================
 # HELPER FUNCTIONS
@@ -2170,7 +2763,12 @@ async def get_prices():
 
 @app.get("/scan")
 async def scan():
-    return engine.scan_all()
+    cached = cache.get("scan")
+    if cached:
+        return cached
+    result = engine.scan_all()
+    cache.set("scan", result, 300)  # 5 min TTL
+    return result
 
 @app.get("/analyze/{coin}")
 async def analyze(
@@ -2220,15 +2818,20 @@ async def analyze(
 
 async def _gather_news_data() -> Dict:
     """Helper to gather news data for AI analysis"""
+    cached = cache.get("news_data")
+    if cached:
+        return cached
     try:
         crypto_news = await news_service.fetch_crypto_news()
         geo_news = await news_service.fetch_geopolitical_news()
         sentiment = await news_service.get_market_sentiment_summary()
-        return {
+        result = {
             'crypto_news': crypto_news,
             'geopolitical_news': geo_news,
             'market_sentiment': sentiment
         }
+        cache.set("news_data", result, 1800)  # 30 min TTL
+        return result
     except Exception:
         return {}
 
@@ -2344,6 +2947,43 @@ async def ai_status():
         'primary_provider': 'Groq (FREE)' if ai_service.groq_available else 'OpenAI' if ai_service.openai_available else 'None',
         'any_available': ai_service.groq_available or ai_service.openai_available
     }
+
+
+# ============================================================
+# TRADING CHAT ENDPOINT
+# ============================================================
+
+class ChatHistoryMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+class ChatRequest(BaseModel):
+    message: str
+    chat_history: List[ChatHistoryMessage] = []
+    analysis_context: Optional[Dict] = None
+    entry_price: Optional[float] = None
+    capital: Optional[float] = None
+    time_horizon: Optional[str] = None
+
+@app.post("/chat/{coin}")
+async def chat(coin: str, req: ChatRequest):
+    """AI trading advisor chat — parallel Groq+Gemini consensus, OpenAI judge on disagreement"""
+    coin_upper = coin.upper()
+    if '_' not in coin_upper:
+        coin_upper = f"{coin_upper}_USDT"
+
+    history = [{"role": m.role, "content": m.content} for m in req.chat_history]
+
+    result = await trading_chat_service.chat(
+        coin=coin_upper,
+        analysis=req.analysis_context or {},
+        message=req.message,
+        history=history,
+        entry_price=req.entry_price,
+        capital=req.capital,
+        time_horizon=req.time_horizon,
+    )
+    return result
 
 @app.get("/config/trade-types")
 async def get_trade_types():
@@ -3395,6 +4035,18 @@ async def get_klines(coin: str, interval: str = "1h", limit: int = 168):
             interval = '1h'
         limit = min(max(limit, 1), 1000)
 
+        # TTL: short intervals cached briefly, long intervals cached longer
+        interval_ttl = {
+            '1m': 30, '3m': 60, '5m': 60, '15m': 120, '30m': 180,
+            '1h': 300, '2h': 300, '4h': 600, '6h': 600,
+            '8h': 900, '12h': 900, '1d': 1800, '3d': 3600, '1w': 3600, '1M': 7200
+        }
+        ttl = interval_ttl.get(interval, 300)
+        cache_key = f"klines:{symbol}:{interval}:{limit}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
         import requests as req
         url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
         resp = req.get(url, timeout=10)
@@ -3413,7 +4065,9 @@ async def get_klines(coin: str, interval: str = "1h", limit: int = 168):
                 'volume': float(k[5])
             })
 
-        return {'coin': coin_upper, 'interval': interval, 'data': data}
+        result = {'coin': coin_upper, 'interval': interval, 'data': data}
+        cache.set(cache_key, result, ttl)
+        return result
     except Exception as e:
         print(f"Klines API error: {e}")
         return {'error': str(e), 'data': []}
