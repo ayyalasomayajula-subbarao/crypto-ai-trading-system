@@ -97,10 +97,12 @@ const CoinsPage: React.FC = () => {
 
   const verdictColor = (verdict: string) => {
     switch (verdict) {
-      case 'BUY': return '#10b981';
-      case 'WAIT': return '#f59e0b';
-      case 'AVOID': return '#ef4444';
-      default: return '#94a3b8';
+      case 'BUY':     return '#10b981';
+      case 'SHORT':   return '#f97316';
+      case 'WAIT':    return '#f59e0b';
+      case 'AVOID':   return '#ef4444';
+      case 'BLOCKED': return '#8b5cf6';
+      default:        return '#94a3b8';
     }
   };
 

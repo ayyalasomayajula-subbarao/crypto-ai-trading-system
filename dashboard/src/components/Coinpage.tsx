@@ -250,8 +250,10 @@ interface AnalysisResult {
   experience_level: string;
   trade_reason?: string;
   verdict: string;
+  signal_direction?: string | null;
   confidence: string;
   model_ran: boolean;
+  model_type?: string;
   blocked_by?: string;
   block_reason?: string;
   win_probability: number | null;
@@ -653,11 +655,12 @@ const CoinPage: React.FC = () => {
 
   const getVerdictColor = (verdict: string): string => {
     switch (verdict) {
-      case 'BUY': return '#10b981';
-      case 'WAIT': return '#f59e0b';
-      case 'AVOID': return '#ef4444';
-      case 'BLOCKED': return '#8b5cf6';
-      default: return '#6b7280';
+      case 'BUY':     return '#10b981';   // green   — active LONG signal
+      case 'SHORT':   return '#f97316';   // orange  — active SHORT signal
+      case 'WAIT':    return '#f59e0b';   // amber   — not ready yet
+      case 'AVOID':   return '#ef4444';   // red     — unfavorable, stay out
+      case 'BLOCKED': return '#8b5cf6';   // purple  — safety limit
+      default:        return '#6b7280';
     }
   };
 
@@ -890,7 +893,7 @@ const CoinPage: React.FC = () => {
                   }}
                 >
                   <div className="verdict-main">
-                    <Tooltip text="The system's overall recommendation based on ML model predictions, market conditions, risk parameters, and trade type requirements. BUY = conditions met, WAIT = almost there, AVOID = unfavorable, BLOCKED = safety limit triggered.">
+                    <Tooltip text="The system's overall recommendation based on ML model predictions, market conditions, risk parameters, and trade type requirements. BUY = go long (P(UP) above threshold), SHORT = go short (P(DOWN) above threshold), WAIT = almost there, AVOID = unfavorable odds, BLOCKED = safety limit triggered.">
                       <span className="verdict-label">Recommendation</span>
                     </Tooltip>
                     <span
@@ -899,6 +902,23 @@ const CoinPage: React.FC = () => {
                     >
                       {analysis.verdict}
                     </span>
+                    {analysis.signal_direction && (
+                      <span
+                        className="direction-badge"
+                        style={{
+                          backgroundColor: getVerdictColor(analysis.verdict),
+                          color: '#fff',
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          marginLeft: '8px',
+                          letterSpacing: '0.05em',
+                        }}
+                      >
+                        {analysis.signal_direction}
+                      </span>
+                    )}
                     <Tooltip text="How confident the system is in its verdict. HIGH = most indicators align, MEDIUM = mixed signals, LOW = conflicting data.">
                       <span className="confidence-badge">{analysis.confidence} confidence</span>
                     </Tooltip>
@@ -1735,7 +1755,7 @@ const CoinPage: React.FC = () => {
                 </div>
               </section>
 
-              {/* Risk Management (only for BUY) */}
+              {/* Risk Management (BUY and SHORT) */}
               {analysis.risk.action === 'OPEN_POSITION' && (
                 <section className="risk-section">
                   <h2>⚖️ Position Sizing</h2>
@@ -1755,18 +1775,20 @@ const CoinPage: React.FC = () => {
                       <span className="risk-value">{formatPrice(analysis.risk.entry_price || 0)}</span>
                     </div>
                     <div className="risk-card loss">
-                      <Tooltip text="Exit the trade if price drops to this level. Limits your maximum loss. Set based on ATR (volatility) and trade type. ALWAYS use a stop loss.">
+                      <Tooltip text={analysis.signal_direction === 'SHORT'
+                        ? 'Exit the SHORT if price rises to this level. Limits your maximum loss on the short position. ALWAYS use a stop loss.'
+                        : 'Exit the trade if price drops to this level. Limits your maximum loss. Set based on ATR (volatility) and trade type. ALWAYS use a stop loss.'}>
                         <span className="risk-label">Stop Loss</span>
                       </Tooltip>
                       <span className="risk-value">{formatPrice(analysis.risk.stop_loss_price || 0)}</span>
-                      <span className="risk-pct">-{analysis.risk.stop_loss_pct}%</span>
+                      <span className="risk-pct">{analysis.signal_direction === 'SHORT' ? '+' : '-'}{analysis.risk.stop_loss_pct}%</span>
                     </div>
                     <div className="risk-card win">
                       <Tooltip text="Target price to take profits. Set based on risk/reward ratio and volatility. Consider taking partial profits here.">
                         <span className="risk-label">Take Profit</span>
                       </Tooltip>
                       <span className="risk-value">{formatPrice(analysis.risk.take_profit_price || 0)}</span>
-                      <span className="risk-pct">+{analysis.risk.take_profit_pct}%</span>
+                      <span className="risk-pct">{analysis.signal_direction === 'SHORT' ? '-' : '+'}{analysis.risk.take_profit_pct}%</span>
                     </div>
                   </div>
 

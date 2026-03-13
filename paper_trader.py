@@ -46,8 +46,8 @@ BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 # ── Frozen configuration (DO NOT CHANGE during paper trading) ──
 CONFIG = {
     'coins': {
-        'SOL_USDT': {'threshold': 0.35, 'model': 'wf_decision_model.pkl'},
-        'PEPE_USDT': {'threshold': 0.40, 'model': 'wf_decision_model.pkl'},
+        'SOL_USDT': {'threshold': 0.35, 'model': 'wf_decision_model_v2.pkl'},
+        'PEPE_USDT': {'threshold': 0.40, 'model': 'wf_decision_model_v2.pkl'},
     },
     'tp_pct': 0.05,
     'sl_pct': 0.03,
@@ -191,20 +191,13 @@ class PaperTrader:
         """Load frozen walk-forward models."""
         for coin, cfg in CONFIG['coins'].items():
             model_path = os.path.join(BASE_DIR, f"models/{coin}/{cfg['model']}")
-            features_path = os.path.join(BASE_DIR, f"models/{coin}/decision_features.txt")
+            features_path = os.path.join(BASE_DIR, f"models/{coin}/decision_features_v2.txt")
 
             if not os.path.exists(model_path):
                 print(f"  [PAPER] WARNING: Model not found: {model_path}")
                 continue
 
             model = joblib.load(model_path)
-            # Patch sklearn version mismatch
-            if not hasattr(model, 'monotonic_cst'):
-                model.monotonic_cst = None
-            if hasattr(model, 'estimators_'):
-                for est in model.estimators_:
-                    if not hasattr(est, 'monotonic_cst'):
-                        est.monotonic_cst = None
 
             with open(features_path) as f:
                 feature_cols = [line.strip() for line in f if line.strip()]
@@ -362,8 +355,8 @@ class PaperTrader:
         win_prob = float(probas[model_info['win_idx']])
         loss_prob = float(probas[model_info['loss_idx']])
 
-        # Entry signal check (same as backtest)
-        if win_prob >= threshold and loss_prob < 0.40:
+        # Entry signal check — binary model: P(WIN) threshold only
+        if win_prob >= threshold:
             # Get next candle's open for entry (use current price as approximation)
             # In live trading, we place order and get filled at next open
             entry_price = float(features.get('close', 0))

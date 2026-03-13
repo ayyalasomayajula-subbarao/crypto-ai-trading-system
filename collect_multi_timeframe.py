@@ -6,6 +6,22 @@ import os
 import warnings
 warnings.filterwarnings('ignore')
 
+# Coin-specific direction thresholds (% 24h return to label as UP / DOWN).
+# Calibrated to each coin's typical daily volatility so UP/DOWN are ~20-35%
+# each, giving the model enough positive examples to learn meaningful patterns.
+#   BTC/ETH  → 1.5% : large-caps move slowly; 3% was 73% SIDEWAYS
+#   SOL      → 2.5% : mid-cap, higher beta
+#   PEPE     → 5.0% : meme coin, 3% is intraday noise
+DIRECTION_THRESHOLDS = {
+    'BTC_USDT':  1.5,
+    'ETH_USDT':  1.5,
+    'SOL_USDT':  3.0,   # raised from 2.5 → 3.0: more selective UP/DOWN labels
+    'PEPE_USDT': 5.0,
+    'AVAX_USDT': 2.5,   # similar beta to SOL
+    'BNB_USDT':  2.0,   # lower vol than SOL; BNB quarterly burns add predictability
+    'LINK_USDT': 2.5,   # mid-cap altcoin, ETH-correlated
+}
+
 class MultiTimeframeCollector:
     def __init__(self):
         self.exchange = ccxt.binance()
@@ -137,11 +153,18 @@ def create_multi_timeframe_features(coin):
         
         # Momentum
         features[f'{prefix}_momentum'] = data['close'] / data['close'].shift(10) - 1
-        
+
+        # Pullback depth from 10-period high — captures entry quality within trend.
+        # 0% = price AT the 10-period high (stretched, poor long entry).
+        # -5% = 5% below 10-period high (healthy pullback, better entry).
+        features[f'{prefix}_dist_from_10p_high'] = (
+            (data['close'] - data['close'].rolling(10).max()) / data['close'].rolling(10).max() * 100
+        )
+
         # Volume
         features[f'{prefix}_volume_ma'] = data['volume'].rolling(14).mean()
         features[f'{prefix}_volume_ratio'] = data['volume'] / features[f'{prefix}_volume_ma']
-        
+
         # Add timestamp for merging
         features['timestamp'] = data['timestamp']
         
@@ -152,43 +175,76 @@ def create_multi_timeframe_features(coin):
     df_1h_features = add_features_for_tf(dfs['1h'], '1h')
     df = df.merge(df_1h_features, on='timestamp', how='left')
     
-    # 4H features (merge on nearest lower timestamp)
+    # 4H features — use the PREVIOUS completed 4h candle to avoid lookahead.
+    # At 1h bar T, floor('4h') gives the START of the current (incomplete) 4h candle.
+    # Subtracting 4h gives the last FULLY CLOSED 4h candle.
     if '4h' in dfs:
         print("  Adding 4H features...")
         df_4h_features = add_features_for_tf(dfs['4h'], '4h')
         df_4h_features['timestamp_4h'] = df_4h_features['timestamp']
-        
-        # Round 1h timestamp down to nearest 4h
-        df['timestamp_4h'] = df['timestamp'].dt.floor('4h')
+
+        df['timestamp_4h'] = df['timestamp'].dt.floor('4h') - pd.Timedelta(hours=4)
         df = df.merge(df_4h_features.drop(columns=['timestamp']), on='timestamp_4h', how='left')
         df = df.drop(columns=['timestamp_4h'])
-    
-    # 1D features
+
+    # 1D features — use the PREVIOUS completed daily candle to avoid lookahead.
+    # At any hour of day D, floor('1d') gives midnight of D.
+    # The day-D candle closes at midnight of D+1, so we subtract 1 day to get
+    # the fully completed day-(D-1) candle.
     if '1d' in dfs:
         print("  Adding 1D features...")
         df_1d_features = add_features_for_tf(dfs['1d'], '1d')
         df_1d_features['timestamp_1d'] = df_1d_features['timestamp']
-        
-        df['timestamp_1d'] = df['timestamp'].dt.floor('1d')
+
+        df['timestamp_1d'] = df['timestamp'].dt.floor('1d') - pd.Timedelta(days=1)
         df = df.merge(df_1d_features.drop(columns=['timestamp']), on='timestamp_1d', how='left')
         df = df.drop(columns=['timestamp_1d'])
-    
-    # 1W features
+
+    # 1W features — use the PREVIOUS completed weekly candle to avoid lookahead.
     if '1w' in dfs:
         print("  Adding 1W features...")
         df_1w_features = add_features_for_tf(dfs['1w'], '1w')
         df_1w_features['timestamp_1w'] = df_1w_features['timestamp']
-        
-        # Round to start of week
-        df['timestamp_1w'] = df['timestamp'].dt.to_period('W').dt.start_time
+
+        # Current week's start, then step back 1 week to get last completed week
+        df['timestamp_1w'] = (
+            df['timestamp'].dt.to_period('W').dt.start_time - pd.Timedelta(weeks=1)
+        )
         df_1w_features['timestamp_1w'] = df_1w_features['timestamp'].dt.to_period('W').dt.start_time
         df = df.merge(df_1w_features.drop(columns=['timestamp']), on='timestamp_1w', how='left')
         df = df.drop(columns=['timestamp_1w'])
-    
+
+    # Funding rate features — perpetual futures sentiment signal.
+    # Use merge_asof (backward) so each 1h bar gets the MOST RECENTLY SETTLED
+    # 8h funding rate. No lookahead: the settled rate is published at settlement time.
+    funding_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'data/{coin}_funding.csv')
+    if os.path.exists(funding_path):
+        print("  Adding funding rate features...")
+        df_fund = pd.read_csv(funding_path)
+        df_fund['timestamp'] = pd.to_datetime(df_fund['timestamp'])
+        df_fund = df_fund.sort_values('timestamp')
+
+        # Rolling stats on the funding rate series
+        df_fund['funding_rate_3d_avg'] = df_fund['funding_rate'].rolling(9, min_periods=1).mean()   # 9×8h = 3 days
+        df_fund['funding_rate_7d_avg'] = df_fund['funding_rate'].rolling(21, min_periods=1).mean()  # 21×8h = 7 days
+        df_fund['funding_rate_momentum'] = df_fund['funding_rate'].diff(3)  # change over last 3 periods (24h)
+
+        df = pd.merge_asof(
+            df.sort_values('timestamp'),
+            df_fund[['timestamp', 'funding_rate', 'funding_rate_3d_avg',
+                      'funding_rate_7d_avg', 'funding_rate_momentum']],
+            on='timestamp',
+            direction='backward',
+        )
+    else:
+        print(f"  ⚠️  No funding rate file for {coin} — skipping")
+
     # Create target (24h forward return)
+    # Use coin-specific threshold so UP/DOWN are ~20-35% each (not 14% at ±3%).
+    thresh = DIRECTION_THRESHOLDS.get(coin, 3.0)
     df['target_return'] = (df['close'].shift(-24) / df['close'] - 1) * 100
     df['target_direction'] = df['target_return'].apply(
-        lambda x: 'UP' if x > 3 else ('DOWN' if x < -3 else 'SIDEWAYS')
+        lambda x: 'UP' if x > thresh else ('DOWN' if x < -thresh else 'SIDEWAYS')
     )
     
     # Drop NaN
@@ -222,7 +278,8 @@ if __name__ == "__main__":
     
     collector = MultiTimeframeCollector()
     
-    coins = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'PEPE/USDT']
+    coins = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'PEPE/USDT',
+             'AVAX/USDT', 'BNB/USDT', 'LINK/USDT']
     
     # Step 1: Collect all timeframes
     print("\n" + "="*60)

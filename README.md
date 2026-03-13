@@ -123,7 +123,7 @@ Manage your profile and account preferences.
 ### AI-Powered Insights
 - **Groq** (Llama 3.3 70B) as primary analyst
 - **Qwen3-32B** on Groq as second opinion (DeepSeek API when credits available)
-- **Groq Judge** (dedicated key) arbitrates on disagreement — fully free, no OpenAI dependency
+- **Groq Judge** (dedicated key) arbitrates on disagreement
 - Cross-references technicals, volume, sentiment, derivatives, news, and whale data
 - Returns: verdict + confidence, timeframe alignment, key levels, market bias, BTC environment, stop loss, targets, position sizing, scenarios
 

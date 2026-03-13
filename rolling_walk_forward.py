@@ -106,9 +106,10 @@ def run_single_window(coin, df, feature_cols, window):
     if len(test_df) < 200:
         return {'label': label, 'error': f'Insufficient test data ({len(test_df)} rows)'}
 
-    # Create labels on train block
+    # Create binary labels on train block (WIN/LOSS only — NO_TRADE dropped)
     train_df['decision_label'] = create_decision_labels(train_df)
     train_df = train_df.dropna(subset=['decision_label'])
+    train_df = train_df[train_df['decision_label'] != 'NO_TRADE'].copy()
 
     if len(train_df) < 300:
         return {'label': label, 'error': 'Insufficient labeled train data'}
