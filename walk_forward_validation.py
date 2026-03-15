@@ -45,6 +45,10 @@ COIN_PARAMS = {
     'AVAX_USDT': {'tp': 0.075, 'sl': 0.025, 'time_limit': 72},   # similar beta to SOL
     'BNB_USDT':  {'tp': 0.060, 'sl': 0.020, 'time_limit': 48},   # slightly lower vol
     'LINK_USDT': {'tp': 0.075, 'sl': 0.025, 'time_limit': 72},   # ETH-correlated altcoin
+    # L2/DeFi expansion — higher vol alts, 3:1 R:R
+    'ARB_USDT':  {'tp': 0.075, 'sl': 0.025, 'time_limit': 72},   # Arbitrum, listed Mar 2023
+    'OP_USDT':   {'tp': 0.075, 'sl': 0.025, 'time_limit': 72},   # Optimism, listed Jun 2022
+    'INJ_USDT':  {'tp': 0.090, 'sl': 0.030, 'time_limit': 72},   # Injective, higher vol, listed Oct 2020
 }
 
 # ── Expanding folds per coin (train anchored to data start, grows each fold) ─
@@ -99,6 +103,25 @@ FOLDS = {
         {'train': ('2021-01-01', '2023-12-31'), 'test': ('2024-01-01', '2024-12-31')},  # 36mo
         {'train': ('2022-01-01', '2024-12-31'), 'test': ('2025-01-01', '2026-02-25')},  # 36mo
     ],
+    # ── L2/DeFi expansion ───────────────────────────────────────────────────
+    'ARB_USDT': [
+        # ARB listed Binance Mar 23 2023; features start ~Apr 2023 after indicator warmup
+        {'train': ('2023-04-20', '2024-06-30'), 'test': ('2024-07-01', '2024-12-31')},  # 14mo train
+        {'train': ('2023-04-20', '2024-12-31'), 'test': ('2025-01-01', '2025-06-30')},  # 20mo train
+        {'train': ('2023-04-20', '2025-06-30'), 'test': ('2025-07-01', '2026-02-25')},  # 26mo train
+    ],
+    'OP_USDT': [
+        # OP listed Binance Jun 2022; features start ~Jul 2022 after indicator warmup
+        {'train': ('2022-07-01', '2023-12-31'), 'test': ('2024-01-01', '2024-12-31')},  # 18mo train
+        {'train': ('2022-07-01', '2024-12-31'), 'test': ('2025-01-01', '2025-06-30')},  # 30mo train
+        {'train': ('2022-07-01', '2025-06-30'), 'test': ('2025-07-01', '2026-02-25')},  # 36mo train
+    ],
+    'INJ_USDT': [
+        # INJ listed Binance Oct 2020; features start ~Jan 2021 after indicator warmup
+        {'train': ('2021-01-01', '2022-12-31'), 'test': ('2023-01-01', '2023-12-31')},  # 24mo train
+        {'train': ('2021-01-01', '2023-12-31'), 'test': ('2024-01-01', '2024-12-31')},  # 36mo train
+        {'train': ('2021-01-01', '2024-12-31'), 'test': ('2025-01-01', '2026-02-25')},  # 48mo train
+    ],
 }
 
 # ── Shared constants ───────────────────────────────────────────────────────
@@ -117,9 +140,10 @@ MIN_FOLD_TRADES = 5
 # ── Experiment toggles ─────────────────────────────────────────────────────
 LONG_ONLY        = False   # True = disable all SHORT signals (tests structural bull-bias)
 META_LABELING    = True    # True = add meta-model layer: only trade when meta says WIN
-META_LABEL_THRESH = 0.25   # primary threshold used to generate meta-label training samples
-META_MIN_SIGNALS  = 20     # minimum signal bars needed in cal set to fit meta model
-META_WIN_THRESH   = 0.55   # meta model P(WIN) required to execute a trade
+META_LABEL_THRESH      = 0.25   # primary threshold used to generate meta-label training samples
+META_MIN_SIGNALS       = 20     # minimum signal bars needed in cal set to fit meta model
+META_WIN_THRESH        = 0.52   # meta model P(WIN) required to execute a trade (was 0.55)
+META_CAL_WINDOW_MONTHS = 12     # rolling cal window: use last N months of train as OOS meta set
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -137,6 +161,36 @@ def get_feature_cols(df):
     return [c for c in df.columns if c not in drop]
 
 
+def select_features(train_df: pd.DataFrame, feature_cols: list) -> list:
+    """
+    Prune zero-importance features using LightGBM gain importance.
+
+    Trains a single fast LGBM on the provided (first-fold) training data to
+    identify columns the tree splitter never selects.  Constant columns,
+    near-duplicate features, and columns dominated by NaN all score gain=0.
+
+    Conservative: uses oldest data only (first fold), so no lookahead into
+    future folds is introduced by the feature selection step.
+    """
+    lgbm = LGBMClassifier(
+        n_estimators=150, learning_rate=0.05, max_depth=5,
+        num_leaves=31, min_child_samples=50,
+        class_weight='balanced', random_state=42, n_jobs=1, verbose=-1,
+    )
+    X = train_df[feature_cols].fillna(0)
+    y = train_df['decision_label']
+    lgbm.fit(X, y)
+
+    importance = lgbm.booster_.feature_importance(importance_type='gain')
+    selected   = [col for col, imp in zip(feature_cols, importance) if imp > 0]
+
+    n_dropped = len(feature_cols) - len(selected)
+    if n_dropped > 0:
+        print(f"  Feature pruning: {n_dropped} zero-gain features dropped "
+              f"({len(selected)} of {len(feature_cols)} remain)")
+    return selected if selected else feature_cols  # guard: never return empty list
+
+
 # ── Model ──────────────────────────────────────────────────────────────────
 
 def _build_lgbm():
@@ -144,7 +198,7 @@ def _build_lgbm():
         n_estimators=700, learning_rate=0.02, max_depth=7,
         num_leaves=63, min_child_samples=50, subsample=0.8,
         colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=0.1,
-        class_weight='balanced', random_state=42, n_jobs=-1, verbose=-1,
+        class_weight='balanced', random_state=42, n_jobs=1, verbose=-1,
     )
 
 
@@ -280,11 +334,14 @@ def train_meta_model(meta_df, feature_cols):
     if y.nunique() < 2:     # can't train a binary classifier on a single class
         return None
 
+    # Meta binary classifier — same complexity as primary but deterministic (n_jobs=1).
+    # n_estimators=200, max_depth=4, num_leaves=15 tested to be appropriately calibrated
+    # for 50-500 signal cal sets; n_jobs=1 ensures full determinism across runs.
     lgbm = LGBMClassifier(
         n_estimators=200, learning_rate=0.05, max_depth=4,
         num_leaves=15, min_child_samples=10, subsample=0.8,
         colsample_bytree=0.8, class_weight='balanced',
-        random_state=42, n_jobs=-1, verbose=-1,
+        random_state=42, n_jobs=1, verbose=-1,
     )
     lgbm.fit(X, y)
     return lgbm, meta_feat
@@ -546,9 +603,9 @@ def run_walk_forward(coin):
                 print(f"{lbl}={dist[lbl]:.1f}%", end=' ')
         print()
 
-        # ── Primary model (trained on first 75% of train window) ───────────
-        n_prim    = int(len(train_df) * 0.75)
-        prim_df   = train_df.iloc[:n_prim]
+        # ── Primary model (trained on first 75% of train window) ───────────────
+        n_prim      = int(len(train_df) * 0.75)
+        prim_df     = train_df.iloc[:n_prim]
         meta_gen_df = train_df.iloc[n_prim:]   # last 25% — OOS for meta-label gen
 
         model, classes, train_acc = train_model(prim_df, feature_cols)
@@ -556,7 +613,7 @@ def run_walk_forward(coin):
         mode_str  = 'LONG only' if LONG_ONLY else ('LONG+SHORT' if 'DOWN' in classes else 'LONG only')
         print(f"  Mode: {mode_str}")
 
-        # ── Meta model (optional, trained on last 25% of train window) ─────
+        # ── Meta model (optional, trained on last 25% of train window) ────────
         meta_model, meta_feat = None, None
         if META_LABELING and len(meta_gen_df) >= 200:
             meta_df = generate_meta_labels(
@@ -686,8 +743,12 @@ def run_walk_forward(coin):
         model_dir = os.path.join(BASE_DIR, f"models/{coin}")
         os.makedirs(model_dir, exist_ok=True)
         joblib.dump(final_model, f"{model_dir}/wf_decision_model_v2.pkl")
+        # Save feature list for paper_trader.py (must match training feature set exactly)
+        with open(f"{model_dir}/decision_features_v2.txt", 'w') as fh:
+            fh.write('\n'.join(feature_cols))
         print(f"  Saved: models/{coin}/wf_decision_model_v2.pkl  "
               f"(train {last_fold['train'][0]}->{last_fold['train'][1]})")
+        print(f"  Saved: models/{coin}/decision_features_v2.txt  ({len(feature_cols)} features)")
 
     return {
         'coin':           coin,
@@ -742,7 +803,8 @@ def main():
 
     # All supported coins — new coins run only if their feature CSV exists
     all_coins = ['BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'PEPE_USDT',
-                 'AVAX_USDT', 'BNB_USDT', 'LINK_USDT']
+                 'AVAX_USDT', 'BNB_USDT', 'LINK_USDT',
+                 'ARB_USDT', 'OP_USDT', 'INJ_USDT']
 
     coins = [c for c in all_coins
              if os.path.exists(os.path.join(BASE_DIR, f"data/{c}_multi_tf_features.csv"))]

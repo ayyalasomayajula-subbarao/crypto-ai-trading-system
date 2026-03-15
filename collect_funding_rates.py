@@ -28,9 +28,13 @@ SYMBOLS = {
     'AVAX_USDT': ('AVAXUSDT', '2020-12-01'),
     'BNB_USDT':  ('BNBUSDT',  '2020-03-01'),
     'LINK_USDT': ('LINKUSDT', '2020-12-01'),
+    # L2/DeFi expansion
+    'ARB_USDT':  ('ARBUSDT',  '2023-03-23'),
+    'OP_USDT':   ('OPUSDT',   '2022-06-01'),
+    'INJ_USDT':  ('INJUSDT',  '2020-10-22'),
 }
 
-NEW_COINS = {'AVAX_USDT', 'BNB_USDT', 'LINK_USDT'}
+NEW_COINS = {'AVAX_USDT', 'BNB_USDT', 'LINK_USDT', 'ARB_USDT', 'OP_USDT', 'INJ_USDT'}
 
 
 def fetch_funding_history(futures_symbol: str, start_iso: str) -> list:

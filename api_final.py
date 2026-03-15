@@ -4459,6 +4459,45 @@ if os.path.isdir(FRONTEND_BUILD):
         return FileResponse(os.path.join(FRONTEND_BUILD, "index.html"))
 
 # ============================================================
+# AGENT ENDPOINTS
+# ============================================================
+
+@app.get("/agents/scan")
+async def agents_scan():
+    """Run SignalAgent for all 7 coins, return ranked signals."""
+    try:
+        from agents.execution.signal_agent import SignalAgent
+        result = SignalAgent().run("scan")
+        return {"signals": result, "count": len(result)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/agents/report")
+async def agents_report():
+    """Run RiskAgent, return paper trading portfolio health."""
+    try:
+        from agents.evaluation.risk_agent import RiskAgent
+        return RiskAgent().run("report")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/agents/models")
+async def agents_models():
+    """Return model version history for all coins."""
+    try:
+        from agents.memory import memory
+        coins = ["BTC_USDT", "ETH_USDT", "SOL_USDT", "PEPE_USDT", "AVAX_USDT", "BNB_USDT", "LINK_USDT"]
+        return {
+            coin: memory.list_model_history(coin, limit=5)
+            for coin in coins
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
 # MAIN
 # ============================================================
 

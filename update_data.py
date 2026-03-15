@@ -28,7 +28,7 @@ import sys
 import argparse
 
 # Configuration
-COINS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'PEPE/USDT']
+COINS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'PEPE/USDT', 'AVAX/USDT', 'BNB/USDT', 'LINK/USDT']
 TIMEFRAMES = ['1h', '4h', '1d', '1w']
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
