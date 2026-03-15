@@ -1369,40 +1369,62 @@ class TradingEngine:
     def load_models(self):
         """Load ML models for each coin"""
         model_dir = 'models'
+        self.feature_lists = getattr(self, 'feature_lists', {})
+        feature_candidates = [
+            'decision_features_v2.txt',
+            'decision_features.txt',
+            'feature_list.txt',
+        ]
+
         for coin in self.coins:
             coin_dir = os.path.join(model_dir, coin)
-            # Try model files in priority order
-            model_candidates = [
-                'wf_decision_model.pkl',  # Walk-forward validated (best)
-                'decision_model.pkl',      # Standard trained
-            ]
-            feature_candidates = [
-                'decision_features.txt',   # Walk-forward features
-                'feature_list.txt',        # Standard features
-            ]
-
             loaded = False
-            for model_file in model_candidates:
-                model_path = os.path.join(coin_dir, model_file)
-                if os.path.exists(model_path):
-                    try:
-                        self.models[coin] = joblib.load(model_path)
-                        # Load feature list
-                        for feat_file in feature_candidates:
-                            feat_path = os.path.join(coin_dir, feat_file)
-                            if os.path.exists(feat_path):
-                                with open(feat_path, 'r') as f:
-                                    self.feature_lists = getattr(self, 'feature_lists', {})
-                                    self.feature_lists[coin] = [line.strip() for line in f if line.strip()]
-                                break
-                        print(f"✅ Loaded model: {coin} ({model_file})")
-                        loaded = True
-                        break
-                    except Exception as e:
-                        print(f"❌ Error loading {coin} model ({model_file}): {e}")
+
+            # ── Priority 1: Dual binary models (wf_model_up_v2 + wf_model_dn_v2) ──
+            up_path = os.path.join(coin_dir, 'wf_model_up_v2.pkl')
+            dn_path = os.path.join(coin_dir, 'wf_model_dn_v2.pkl')
+            if os.path.exists(up_path) and os.path.exists(dn_path):
+                try:
+                    model_up = joblib.load(up_path)
+                    model_dn = joblib.load(dn_path)
+                    self.models[coin] = (model_up, model_dn)   # stored as tuple
+                    for feat_file in feature_candidates:
+                        feat_path = os.path.join(coin_dir, feat_file)
+                        if os.path.exists(feat_path):
+                            with open(feat_path, 'r') as f:
+                                self.feature_lists[coin] = [l.strip() for l in f if l.strip()]
+                            break
+                    print(f"✅ Loaded dual binary model: {coin} (wf_model_up/dn_v2.pkl)")
+                    loaded = True
+                except Exception as e:
+                    print(f"❌ Error loading dual binary model {coin}: {e}")
+
+            # ── Priority 2: Single model fallback ─────────────────────────────────
+            if not loaded:
+                single_candidates = [
+                    'wf_decision_model_v2.pkl',
+                    'decision_model_v2.pkl',
+                    'wf_decision_model.pkl',
+                    'decision_model.pkl',
+                ]
+                for model_file in single_candidates:
+                    model_path = os.path.join(coin_dir, model_file)
+                    if os.path.exists(model_path):
+                        try:
+                            self.models[coin] = joblib.load(model_path)
+                            for feat_file in feature_candidates:
+                                feat_path = os.path.join(coin_dir, feat_file)
+                                if os.path.exists(feat_path):
+                                    with open(feat_path, 'r') as f:
+                                        self.feature_lists[coin] = [l.strip() for l in f if l.strip()]
+                                    break
+                            print(f"✅ Loaded model: {coin} ({model_file})")
+                            loaded = True
+                            break
+                        except Exception as e:
+                            print(f"❌ Error loading {coin} model ({model_file}): {e}")
 
             if not loaded:
-                # Fallback to old path structure
                 old_model_path = os.path.join(model_dir, f'{coin}_model.pkl')
                 if os.path.exists(old_model_path):
                     try:
@@ -1973,6 +1995,7 @@ class TradingEngine:
 
         try:
             model = self.models[coin]
+            is_dual = isinstance(model, tuple)   # (model_up, model_dn)
 
             # Get the feature list for this coin
             feature_lists = getattr(self, 'feature_lists', {})
@@ -2006,17 +2029,38 @@ class TradingEngine:
             # Predict - use DataFrame with feature names to avoid sklearn warning
             X = pd.DataFrame([features], columns=feature_list)
 
+            # ── Dual binary path ───────────────────────────────────────────────
+            if is_dual:
+                model_up, model_dn = model
+                # Each binary model: predict_proba[:, 1] = P(class=1)
+                up_p = float(model_up.predict_proba(X)[0][1])
+                dn_p = float(model_dn.predict_proba(X)[0][1])
+                # Clip to [0.05, 0.95] — wider than 3-class since these are independent
+                up_p = float(np.clip(up_p, 0.05, 0.95))
+                dn_p = float(np.clip(dn_p, 0.05, 0.95))
+                sideways_p = max(0.0, 1.0 - up_p - dn_p)
+                return {
+                    'win':      round(up_p * 100, 1),
+                    'loss':     round(dn_p * 100, 1),
+                    'sideways': round(sideways_p * 100, 1),
+                    'error':    None,
+                    'model_type': 'dual_binary',
+                }
+
+            # ── Single model path (3-class or legacy binary) ───────────────────
             if hasattr(model, 'predict_proba'):
                 probs = model.predict_proba(X)[0]
+                # Clip isotonic calibration extremes
+                probs = np.clip(probs, 0.15, 0.85)
+                probs = probs / probs.sum()  # renormalize after clip
                 classes = model.classes_ if hasattr(model, 'classes_') else None
 
                 # Map probabilities based on class labels
+                win_prob = 0.0
+                loss_prob = 0.0
+                sideways_prob = 0.0
                 if classes is not None:
                     class_list = list(classes)
-                    win_prob = 0.0
-                    loss_prob = 0.0
-                    sideways_prob = 0.0
-
                     for i, cls in enumerate(class_list):
                         cls_str = str(cls).upper()
                         if cls_str in ['UP', '1', 'WIN', 'BULLISH']:
@@ -2025,8 +2069,6 @@ class TradingEngine:
                             loss_prob = probs[i] * 100
                         elif cls_str in ['SIDEWAYS', 'NEUTRAL']:
                             sideways_prob = probs[i] * 100
-
-                    # If we couldn't map classes, use position-based assignment
                     if win_prob == 0 and loss_prob == 0:
                         if len(probs) >= 3:
                             loss_prob = probs[0] * 100
@@ -2036,7 +2078,6 @@ class TradingEngine:
                             loss_prob = probs[0] * 100
                             win_prob = probs[1] * 100
                 else:
-                    # Fallback for models without classes_ attribute
                     if len(probs) >= 3:
                         loss_prob = probs[0] * 100
                         sideways_prob = probs[1] * 100
@@ -2047,22 +2088,22 @@ class TradingEngine:
                     else:
                         win_prob = probs[0] * 100
                         loss_prob = 100 - win_prob
-                        sideways_prob = 0.0
 
                 return {
                     'win': round(win_prob, 1),
                     'loss': round(loss_prob, 1),
                     'sideways': round(sideways_prob, 1),
-                    'error': None
+                    'error': None,
+                    'model_type': 'single',
                 }
             else:
                 # Binary model without predict_proba
                 pred = model.predict(X)[0]
                 pred_str = str(pred).upper()
                 if pred_str in ['UP', '1', 'WIN', 'BULLISH']:
-                    return {'win': 60, 'loss': 40, 'sideways': 0, 'error': None}
+                    return {'win': 60, 'loss': 40, 'sideways': 0, 'error': None, 'model_type': 'single'}
                 else:
-                    return {'win': 40, 'loss': 60, 'sideways': 0, 'error': None}
+                    return {'win': 40, 'loss': 60, 'sideways': 0, 'error': None, 'model_type': 'single'}
 
         except Exception as e:
             import traceback
@@ -2416,29 +2457,34 @@ class TradingEngine:
             # Calculate metrics
             expectancy = win_prob - loss_prob
             readiness = win_prob - (adjusted_threshold * 100)
-            
+            thresh_pct = adjusted_threshold * 100
+
             # Determine verdict based on metrics
-            if win_prob >= adjusted_threshold * 100 and expectancy >= 0:
+            if win_prob >= thresh_pct and win_prob >= loss_prob:
+                # P(UP) above threshold AND stronger than P(DOWN) → LONG signal
                 verdict = 'BUY'
-                confidence = 'HIGH' if expectancy > 10 else 'MEDIUM' if expectancy > 5 else 'LOW'
-                reasoning.append(f'WIN {win_prob:.1f}% meets threshold {adjusted_threshold*100:.0f}%')
-                reasoning.append(f'Positive expectancy: +{expectancy:.1f}%')
-                
-            elif win_prob >= adjusted_threshold * 100 and expectancy < 0:
-                verdict = 'WAIT'
-                confidence = 'LOW'
-                reasoning.append(f'Threshold met but expectancy negative ({expectancy:.1f}%)')
-                reasoning.append('Wait for LOSS probability to decrease')
-                
+                edge = win_prob - loss_prob
+                confidence = 'HIGH' if edge > 10 else 'MEDIUM' if edge > 5 else 'LOW'
+                reasoning.append(f'P(UP) {win_prob:.1f}% meets threshold {thresh_pct:.0f}%')
+                reasoning.append(f'Bullish edge: P(UP) {win_prob:.1f}% > P(DOWN) {loss_prob:.1f}%')
+
+            elif loss_prob >= thresh_pct and loss_prob > win_prob:
+                # P(DOWN) above threshold AND stronger than P(UP) → SHORT signal
+                verdict = 'SHORT'
+                edge = loss_prob - win_prob
+                confidence = 'HIGH' if edge > 10 else 'MEDIUM' if edge > 5 else 'LOW'
+                reasoning.append(f'P(DOWN) {loss_prob:.1f}% meets threshold {thresh_pct:.0f}%')
+                reasoning.append(f'Bearish edge: P(DOWN) {loss_prob:.1f}% > P(UP) {win_prob:.1f}%')
+
             elif loss_prob > 50:
                 verdict = 'AVOID'
                 confidence = 'HIGH'
-                reasoning.append(f'LOSS {loss_prob:.1f}% > 50% - unfavorable odds')
-                
+                reasoning.append(f'P(DOWN) {loss_prob:.1f}% > 50% - unfavorable odds')
+
             else:
                 verdict = 'WAIT'
                 confidence = 'MEDIUM' if readiness > -5 else 'LOW'
-                reasoning.append(f'WIN {win_prob:.1f}% below threshold {adjusted_threshold*100:.0f}%')
+                reasoning.append(f'P(UP) {win_prob:.1f}% below threshold {thresh_pct:.0f}%')
                 if readiness > -10:
                     reasoning.append(f'Close to entry - monitor for improvement')
         
@@ -2475,25 +2521,32 @@ class TradingEngine:
         # POSITION SIZING
         # =====================================
         
-        if verdict == 'BUY':
+        if verdict in ('BUY', 'SHORT'):
             position_size_usd = round(request.capital * trade_analysis['position_size_pct'], 2)
             entry_price = request.entry_price or price
-            stop_loss_price = round(entry_price * (1 - trade_analysis['stop_loss_pct'] / 100), 8)
-            take_profit_price = round(entry_price * (1 + trade_analysis['take_profit_pct'] / 100), 8)
-            max_loss = round(position_size_usd * trade_analysis['stop_loss_pct'] / 100, 2)
-            
+            sl_pct = trade_analysis['stop_loss_pct']
+            tp_pct = trade_analysis['take_profit_pct']
+            if verdict == 'BUY':
+                stop_loss_price   = round(entry_price * (1 - sl_pct / 100), 8)
+                take_profit_price = round(entry_price * (1 + tp_pct / 100), 8)
+            else:  # SHORT — SL above entry, TP below entry
+                stop_loss_price   = round(entry_price * (1 + sl_pct / 100), 8)
+                take_profit_price = round(entry_price * (1 - tp_pct / 100), 8)
+            max_loss = round(position_size_usd * sl_pct / 100, 2)
+
             risk_info = {
-                'action': 'OPEN_POSITION',
-                'position_size_usd': position_size_usd,
-                'position_size_pct': round(trade_analysis['position_size_pct'] * 100, 1),
-                'entry_price': entry_price,
-                'stop_loss_price': stop_loss_price,
-                'stop_loss_pct': trade_analysis['stop_loss_pct'],
-                'take_profit_price': take_profit_price,
-                'take_profit_pct': trade_analysis['take_profit_pct'],
-                'max_loss_usd': max_loss,
-                'max_hold_hours': trade_analysis['max_hold_hours'],
-                'risk_reward': trade_analysis['risk_reward_ratio']
+                'action':             'OPEN_POSITION',
+                'direction':          'LONG' if verdict == 'BUY' else 'SHORT',
+                'position_size_usd':  position_size_usd,
+                'position_size_pct':  round(trade_analysis['position_size_pct'] * 100, 1),
+                'entry_price':        entry_price,
+                'stop_loss_price':    stop_loss_price,
+                'stop_loss_pct':      sl_pct,
+                'take_profit_price':  take_profit_price,
+                'take_profit_pct':    tp_pct,
+                'max_loss_usd':       max_loss,
+                'max_hold_hours':     trade_analysis['max_hold_hours'],
+                'risk_reward':        trade_analysis['risk_reward_ratio'],
             }
         else:
             risk_info = {
@@ -2536,7 +2589,14 @@ class TradingEngine:
         if verdict == 'BUY':
             suggested_action = {
                 'action': 'EXECUTE',
-                'message': f'Conditions favorable for {trade_analysis["trade_type_info"]["name"]} trade',
+                'message': f'Conditions favorable for {trade_analysis["trade_type_info"]["name"]} LONG trade',
+                'next_check': None,
+                'conditions': []
+            }
+        elif verdict == 'SHORT':
+            suggested_action = {
+                'action': 'EXECUTE_SHORT',
+                'message': f'Bearish conditions favorable for {trade_analysis["trade_type_info"]["name"]} SHORT trade',
                 'next_check': None,
                 'conditions': []
             }
@@ -2589,8 +2649,10 @@ class TradingEngine:
             
             # Verdict
             'verdict': verdict,
+            'signal_direction': 'LONG' if verdict == 'BUY' else 'SHORT' if verdict == 'SHORT' else None,
             'confidence': confidence,
             'model_ran': probs.get('error') is None,
+            'model_type': probs.get('model_type', 'single'),
             'blocked_by': trade_analysis['blocks'][0]['type'] if trade_analysis['blocks'] else None,
             'block_reason': block_reason,
             
@@ -4395,6 +4457,45 @@ if os.path.isdir(FRONTEND_BUILD):
         if os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(os.path.join(FRONTEND_BUILD, "index.html"))
+
+# ============================================================
+# AGENT ENDPOINTS
+# ============================================================
+
+@app.get("/agents/scan")
+async def agents_scan():
+    """Run SignalAgent for all 7 coins, return ranked signals."""
+    try:
+        from agents.execution.signal_agent import SignalAgent
+        result = SignalAgent().run("scan")
+        return {"signals": result, "count": len(result)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/agents/report")
+async def agents_report():
+    """Run RiskAgent, return paper trading portfolio health."""
+    try:
+        from agents.evaluation.risk_agent import RiskAgent
+        return RiskAgent().run("report")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/agents/models")
+async def agents_models():
+    """Return model version history for all coins."""
+    try:
+        from agents.memory import memory
+        coins = ["BTC_USDT", "ETH_USDT", "SOL_USDT", "PEPE_USDT", "AVAX_USDT", "BNB_USDT", "LINK_USDT"]
+        return {
+            coin: memory.list_model_history(coin, limit=5)
+            for coin in coins
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ============================================================
 # MAIN

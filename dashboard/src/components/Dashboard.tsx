@@ -158,11 +158,12 @@ const Dashboard: React.FC = () => {
 
   const getVerdictColor = (verdict: string): string => {
     switch (verdict) {
-      case 'BUY': return '#10b981';
-      case 'WAIT': return '#f59e0b';
-      case 'AVOID': return '#ef4444';
+      case 'BUY':     return '#10b981';
+      case 'SHORT':   return '#f97316';
+      case 'WAIT':    return '#f59e0b';
+      case 'AVOID':   return '#ef4444';
       case 'BLOCKED': return '#8b5cf6';
-      default: return '#6b7280';
+      default:        return '#6b7280';
     }
   };
 

@@ -1,6 +1,6 @@
-# Crypto AI Trading System v7.2
+# Crypto AI Trading System v8.0
 
-A full-stack crypto trading intelligence platform with ML predictions, AI-powered analysis, multi-LLM consensus chat, paper trading, backtesting, and real-time market data.
+A full-stack crypto trading intelligence platform with LightGBM ML predictions, walk-forward validated models, multi-agent orchestration, AI-powered analysis, multi-LLM consensus chat, bidirectional paper trading, backtesting, and real-time market data.
 
 ## User Flow
 
@@ -12,7 +12,7 @@ After login, you land on the **Overview** page — your market command center.
 
 - **Market Banner** — Shows current market condition (opportunities, high risk, etc.)
 - **Live Prices** — BTC, ETH, SOL, PEPE update in real-time via WebSocket
-- **Coin Cards** — Each card shows current price, 1H/24H/7D changes, ML verdict (BUY/WAIT/AVOID), expectancy, and active scenarios
+- **Coin Cards** — Each card shows current price, 1H/24H/7D changes, ML verdict (BUY/SHORT/WAIT/AVOID), expectancy, and active scenarios
 - **News Feed** — Crypto and geopolitical news with sentiment tags below the signals grid
 - **Sidebar Navigation** — Persistent sidebar with links to all sections
 
@@ -27,16 +27,16 @@ Dedicated page for tracking your holdings:
 ### 4. Coins
 Browse all supported coins with live prices and quick verdicts:
 
-- **Coin Cards** — BTC, ETH, SOL, PEPE with live WebSocket prices
+- **Coin Cards** — BTC, ETH, SOL, PEPE, AVAX, BNB, LINK, ARB, OP, INJ with live WebSocket prices
 - **24H Change** — Color-coded percentage changes
-- **Quick Verdict** — ML model verdict badge and win probability bar
+- **Quick Verdict** — ML model verdict badge (BUY/SHORT/WAIT/AVOID) and win probability bar
 - Click any coin to open the detailed analysis page
 
 ### 5. Coin Analysis Page
 Click any coin for the full analysis breakdown:
 
 - **Price Chart** — Interactive TradingView chart with 9 timeframes (1H to ALL), candlestick or area mode
-- **ML Predictions** — WIN/LOSS/SIDEWAYS probabilities from the trained model
+- **ML Predictions** — UP/DOWN/SIDEWAYS probabilities from the LightGBM model with isotonic calibration
 - **Trade Setup** — Select your trade type (SCALP, SHORT_TERM, SWING, INVESTMENT) and experience level (BEGINNER, INTERMEDIATE, ADVANCED) to get personalized thresholds
 - **Market Regime** — ADX trend strength, volatility classification
 - **Volume Analysis** — OBV, MFI, buy/sell delta, volume spikes, volume profile
@@ -48,7 +48,7 @@ Click any coin for the full analysis breakdown:
 - **Price Forecast** — Upside/sideways/downside probabilities with bull/bear targets
 - **AI Analysis** — Click "Run Deep Analysis" for Groq-powered insights including TLDR, risks, entry strategy
 
-### 6. AI Trading Chat (NEW in v7.2)
+### 6. AI Trading Chat
 Context-aware trading advisor accessible from any coin page:
 
 - **Time Horizon Chips** — Select SCALP / SHORT / SWING / INVEST before querying; AI prompts you if not set
@@ -63,11 +63,12 @@ The automated paper trading bot runs 24/7 on your server:
 
 - **Start/Stop** — Set your capital and start the bot
 - **Live Equity Curve** — Watch your portfolio value change over time
-- **Open Positions** — See current trades with entry price, P&L, and exit targets
+- **Open Positions** — See current trades with entry price, P&L, and exit targets (LONG and SHORT)
 - **Trade Log** — Full history of every trade with entry/exit prices and reasons
 - **Metrics** — Win rate, profit factor, Sharpe ratio, max drawdown
 - **Day Counter** — Progress toward the 45-day validation target
-- The bot uses frozen walk-forward validated models — no parameter changes during the test
+- **Bidirectional** — Goes LONG on UP signals, SHORT on DOWN signals, filtered by ADX + weekly regime gate
+- Currently active coins: **BTC** (threshold=0.50) and **LINK** (threshold=0.55), both walk-forward validated MARGINAL
 
 ### 8. Backtest
 Test trading strategies against historical data:
@@ -81,39 +82,73 @@ Manage your profile and account preferences.
 
 ## Features
 
-### Core Analysis Engine
-- **ML Model Predictions** — RandomForest trained on multi-timeframe data (1H/4H/1D/1W)
-- **Walk-Forward Validated Models** — Rolling validation ensures models aren't overfit
-- **Trade-Type-Specific Analysis** — SCALP, SHORT_TERM, SWING, INVESTMENT with different thresholds
-- **Experience-Level Adjustments** — BEGINNER, INTERMEDIATE, ADVANCED modify required probabilities
-- **Scenario Engine** — Detects FOMO, losing streaks, overtrading, BTC crashes, extreme volatility
-- **Position Sizing** — Kelly Criterion + ATR-based stop loss/take profit
+### Core ML Engine
+- **LightGBM 3-Class Model** — UP / DOWN / SIDEWAYS predictions with isotonic probability calibration
+- **90 ML Features** — 1H/4H/1D/1W: SMA-21/50 + distances + slopes, RSI, MACD-diff, Bollinger width/position, ATR%, ADX, momentum, dist-from-10p-high, realized vol (1H), funding rate features (rate/3d-avg/7d-avg/momentum/trend), taker imbalance (4H/24H MA)
+- **No Lookahead** — 4H/1D/1W use the previous completed candle (floor-subtract)
+- **Walk-Forward Validated Models** — Expanding multi-fold WF ensures models are not overfit
+- **Meta-Labeling** — Secondary LightGBM trained on each fold's last 25%; only trades when meta P(WIN) ≥ 0.52
+- **Bidirectional Trading** — LONG on UP signal, SHORT on DOWN signal
+- **ADX Gate** — `1h_adx ≥ 20` required for entry (trending markets only)
+- **Regime Gate** — Weekly SMA-50 distance > 0 for LONG, < 0 for SHORT
 
-### AI Trading Chat (NEW in v7.2)
-- **Multi-LLM Consensus** — Groq (Llama 3.3 70B) + Qwen3-32B run in parallel; dedicated Groq judge key arbitrates on disagreement
-- **Three-tier fallback** — DeepSeek API → Qwen3-32B on Groq
-- **Rich structured responses** — Timeframe alignment grid, key levels, BTC environment, position sizing, scenario probabilities
-- **Time horizon + capital aware** — `INPUT_REQUIRED` flow prompts inline if horizon not set; auto-resubmits without duplicate messages
-- **`<think>` token stripping** — Qwen3-32B reasoning tokens stripped before JSON parsing
-- **Separate rate-limit pools** — `GROQ_API_KEY` for primary+second-opinion, `GROQ_JUDGE_API_KEY` for judge
+### Walk-Forward Results (Current Best)
+| Coin | Status | Sharpe | WR | Threshold | Notes |
+|------|--------|--------|----|-----------|-------|
+| BTC | **MARGINAL** ✅ | +0.382 | 58.4% | 0.50 | 3 folds, 43 trades, shorts-only |
+| LINK | **MARGINAL** ✅ | +0.456 | 49.5% | 0.55 | 3 folds, 21 trades, longs-only |
+| AVAX | NOT_VIABLE | +0.173 | — | 0.60 | borderline |
+| OP | NOT_VIABLE | +0.302 | — | — | borderline, short history |
+| ETH | INSUFFICIENT_DATA | — | — | — | meta over-filters; resolves with more 2025 data |
+| SOL | NOT_VIABLE | — | — | — | |
+| PEPE | NOT_VIABLE | — | — | — | meme coin, fast regime changes |
+| ARB | NOT_VIABLE | — | — | — | <2yr history |
+| BNB | NOT_VIABLE | — | — | — | |
+| INJ | NOT_VIABLE | — | — | — | |
 
-### MUI Sidebar Layout (NEW in v7.1)
+### Multi-Agent System (NEW in v8.0)
+Hierarchical orchestration engine for automated ML pipeline management:
+
+- **Queen Agent** — Routes tasks, orchestrates parallel execution via TaskQueue
+- **Planner Agent** — Groq LLM task decomposition (hardcoded plans for known tasks — no LLM call for scan/report/update-data)
+- **Memory Agent** — SQLite at `data/agent_memory.db` with model version tracking
+- **Signal Agent** — Scans all coins in parallel (ThreadPoolExecutor × 7)
+- **Data Agent** — Incremental Binance OHLCV fetch + CSV update
+- **Feature Agent** — Multi-timeframe feature engineering
+- **Strategy Agent** — LLM-ranked trade recommendations
+- **Backtest Agent** — Walk-forward validation per coin
+- **Risk Agent** — Paper trading metrics + degradation detection
+- **Optimizer Agent** — Threshold sweep (±0.05/0.10/0.15) on saved model
+- **Discovery Agent** — LLM proposes param variations, mini-backtests top candidates
+- **Monitor Agent** — Daily drift check → triggers Optimizer → BacktestAgent if degraded
+
+CLI usage:
+```bash
+python agent_runner.py scan              # ranked signals for all coins
+python agent_runner.py report            # paper trading metrics
+python agent_runner.py analyze BTC       # full pipeline: data→signal→strategy→risk
+python agent_runner.py backtest LINK     # walk-forward validation
+python agent_runner.py optimize BTC      # threshold sweep
+python agent_runner.py self-improve      # monitor → optimize → retrain if degraded
+python agent_runner.py discover BTC      # LLM proposes + mini-backtests param variations
+python agent_runner.py update-data       # refresh all coin CSVs
+```
+
+Token efficiency: ~65-80% reduction vs single-prompt approach via role-specific 50-100-word system prompts, SQLite context retrieval, parallel 7-coin scan, and summary compression before storage.
+
+### MUI Sidebar Layout
 - **Persistent Sidebar** — Material UI drawer with Overview, Portfolio, Coins, Backtest, Signals, Paper Trading navigation
 - **Mobile Responsive** — Collapsible hamburger menu on mobile, permanent drawer on desktop
 - **Profile Section** — User avatar, name, and email in sidebar footer
 - **Dark Theme** — MUI ThemeProvider with custom dark palette
 
-### Dedicated Pages (NEW in v7.1)
-- **Portfolio Page** — Extracted from Overview into its own page with full portfolio management
-- **Coins Page** — Browse all coins with live prices, verdicts, and win probability bars
-- **Settings Page** — Profile and account management
-
 ### Paper Trading Engine
-- **Automated Hourly Processing** — Fetches candles from Binance, computes features, runs model
-- **Frozen Parameters** — SOL threshold 0.35, PEPE threshold 0.40, TP 5%, SL 3%, TIME 48h
+- **Automated Hourly Processing** — Fetches candles from Binance, computes 90 live features, runs LightGBM model
+- **Bidirectional** — LONG on P(UP) ≥ threshold + ADX ≥ 20 + regime long; SHORT on P(DOWN) ≥ threshold + regime short
+- **Frozen Parameters** — BTC thresh=0.50 TP=3% SL=1.5% 48h | LINK thresh=0.55 TP=7.5% SL=2.5% 72h
 - **State Persistence** — Survives server restarts via JSON state file
-- **Auto-Start** — Set `AUTO_START_PAPER_TRADING=true` to start on boot
 - **0.5% Equity Risk** per trade with 0.22% round-trip costs
+- **Feature Parity** — Same 90-feature format as training (no lookahead, SMA-21/50 only)
 
 ### Backtesting Engine
 - **Realistic Execution** — Includes trading costs, slippage, position sizing
@@ -123,7 +158,7 @@ Manage your profile and account preferences.
 ### AI-Powered Insights
 - **Groq** (Llama 3.3 70B) as primary analyst
 - **Qwen3-32B** on Groq as second opinion (DeepSeek API when credits available)
-- **Groq Judge** (dedicated key) arbitrates on disagreement — fully free, no OpenAI dependency
+- **Groq Judge** (dedicated key) arbitrates on disagreement
 - Cross-references technicals, volume, sentiment, derivatives, news, and whale data
 - Returns: verdict + confidence, timeframe alignment, key levels, market bias, BTC environment, stop loss, targets, position sizing, scenarios
 
@@ -140,8 +175,9 @@ Manage your profile and account preferences.
 
 ### Market Sentiment
 - **Fear & Greed Index** (alternative.me)
-- **Funding Rate** (Binance Futures)
+- **Funding Rate** (Binance Futures — 8h settlement)
 - **Open Interest** (Binance Futures)
+- **Taker Buy/Sell Imbalance** (4H and 24H moving average)
 
 ### Derivatives Intelligence
 - **Long/Short Ratio** — Top Traders vs Global accounts with smart money signal
@@ -163,16 +199,18 @@ Manage your profile and account preferences.
 | Layer | Technology |
 |-------|-----------|
 | Backend | Python 3.9, FastAPI, uvicorn |
-| ML Models | scikit-learn 1.3.0 (RandomForest), walk-forward validated |
+| ML Models | LightGBM + isotonic calibration (3-class UP/DOWN/SIDEWAYS), walk-forward validated |
+| Feature Engineering | 90 features, 4 timeframes (1H/4H/1D/1W), no lookahead |
+| Agent System | Python `agents/` package, Groq LLM, SQLite memory |
 | Frontend | React 19, TypeScript, MUI 6 |
 | Charts | TradingView lightweight-charts |
 | Auth | Supabase |
 | AI | Groq (primary + judge), Qwen3-32B/Groq (second opinion), DeepSeek (optional) |
-| Data | Binance API, Blockchair, alternative.me, RSS feeds |
+| Data | Binance API (OHLCV + Futures), Blockchair, alternative.me, RSS feeds |
 | Deployment | AWS EC2 (eu-north-1) |
 
 ## Coins Supported
-BTC/USDT, ETH/USDT, SOL/USDT, PEPE/USDT
+BTC/USDT, ETH/USDT, SOL/USDT, PEPE/USDT, AVAX/USDT, BNB/USDT, LINK/USDT, ARB/USDT, OP/USDT, INJ/USDT
 
 ## Setup
 
@@ -213,6 +251,26 @@ npm run build
 # Build output served by FastAPI at http://localhost:8000
 ```
 
+### Data & Model Training
+```bash
+# 1. Collect OHLCV + features for all 10 coins
+python collect_multi_timeframe.py
+
+# 2. Collect funding rates (Binance Futures)
+python collect_funding_rates.py
+
+# 3. Collect taker volume
+python collect_taker_volume.py
+
+# 4. Train and walk-forward validate models
+python walk_forward_validation.py
+
+# 5. (Optional) Incremental data update via agent system
+python agent_runner.py update-data
+```
+
+Use Python 3.9 to ensure model pickle compatibility across environments.
+
 ## API Endpoints
 
 | Endpoint | Description |
@@ -236,36 +294,65 @@ npm run build
 | `GET /paper-trading/trades` | Full trade log |
 | `GET /paper-trading/metrics` | Win rate, PF, Sharpe, DD |
 | `POST /paper-trading/reset` | Clear state and start fresh |
+| `GET /agents/scan` | Agent system: ranked signals for all coins |
+| `GET /agents/report` | Agent system: paper trading health report |
+| `GET /agents/models` | Agent system: active model versions |
 | `WS /ws/prices` | Real-time price WebSocket |
 
 ## Project Structure
 ```
 crypto-ai-system/
-├── api_final.py              # FastAPI backend (port 8000)
-├── paper_trader.py           # Paper trading engine
-├── backtesting_engine.py     # Backtesting with realistic execution
-├── walk_forward_validation.py # Walk-forward model validation
-├── rolling_walk_forward.py   # Rolling robustness testing
-├── collect_multi_timeframe.py # Data collection script
-├── requirements.txt          # Python dependencies (pinned versions)
-├── .env                      # API keys (GROQ, OpenAI)
-├── data/                     # Historical OHLCV + features
+├── api_final.py                  # FastAPI backend (port 8000)
+├── paper_trader.py               # Paper trading engine (bidirectional, 90-feature)
+├── walk_forward_validation.py    # Expanding WF + meta-labeling
+├── collect_multi_timeframe.py    # 90-feature engineering (no lookahead)
+├── collect_funding_rates.py      # Binance Futures funding rate history
+├── collect_taker_volume.py       # Binance taker buy/sell volume
+├── rolling_walk_forward.py       # Rolling robustness testing
+├── train_decision_model.py       # Standard (non-WF) model training
+├── agent_runner.py               # Multi-agent CLI entry point
+├── update_data.py                # Incremental data updater
+├── CLAUDE.md                     # Agent development rules
+├── requirements.txt              # Python dependencies (pinned)
+├── .env                          # API keys (GROQ, OpenAI)
+├── agents/                       # Multi-agent system
+│   ├── __init__.py
+│   ├── base.py                   # BaseAgent: think() + log()
+│   ├── memory.py                 # AgentMemory: SQLite + model version tracking
+│   ├── queen.py                  # QueenAgent: routing + orchestration
+│   ├── planner.py                # PlannerAgent: Groq LLM task decomposition
+│   ├── queue_worker.py           # TaskQueue: ThreadPoolExecutor + per-task timeout
+│   ├── monitor.py                # MonitorAgent: drift detection + self-improve loop
+│   ├── execution/
+│   │   ├── data_agent.py         # DataAgent: Binance OHLCV fetch
+│   │   ├── feature_agent.py      # FeatureAgent: multi-TF feature engineering
+│   │   ├── signal_agent.py       # SignalAgent: parallel 7-coin signal scan
+│   │   └── strategy_agent.py     # StrategyAgent: LLM trade ranking
+│   └── evaluation/
+│       ├── backtest_agent.py     # BacktestAgent: walk-forward validation
+│       ├── risk_agent.py         # RiskAgent: paper trading metrics
+│       ├── optimizer_agent.py    # OptimizerAgent: threshold sweep
+│       └── discovery_agent.py    # DiscoveryAgent: LLM param exploration
+├── data/                         # Historical OHLCV + features
 │   ├── {COIN}_USDT_1h.csv
 │   ├── {COIN}_USDT_4h.csv
 │   ├── {COIN}_USDT_1d.csv
 │   ├── {COIN}_USDT_1w.csv
 │   ├── {COIN}_USDT_multi_tf_features.csv
-│   └── paper_trading_state.json
-├── models/                   # Trained ML models
+│   ├── {COIN}_USDT_funding.csv
+│   ├── {COIN}_USDT_taker_volume.csv
+│   ├── paper_trading_state.json
+│   └── agent_memory.db           # SQLite: agent memory + model versions
+├── models/                       # Trained ML models (per coin)
 │   └── {COIN}_USDT/
-│       ├── wf_decision_model.pkl    # Walk-forward validated
-│       ├── decision_model.pkl       # Standard trained
-│       └── decision_features.txt
-└── dashboard/                # React frontend
-    ├── .env                  # Supabase keys
+│       ├── wf_decision_model_v2.pkl    # Walk-forward + meta-labeled model
+│       ├── decision_model_v2.pkl       # Standard trained model
+│       └── decision_features_v2.txt   # 90 feature names (exact training order)
+└── dashboard/                    # React frontend
+    ├── .env                      # Supabase keys
     └── src/
-        ├── theme.ts          # MUI dark theme configuration
-        ├── App.tsx            # Routes with Layout wrapper
+        ├── theme.ts              # MUI dark theme configuration
+        ├── App.tsx               # Routes with Layout wrapper
         ├── components/
         │   ├── layout/
         │   │   ├── Layout.tsx    # Sidebar + TopBar + Outlet
@@ -289,6 +376,7 @@ crypto-ai-system/
 ## Version History
 | Version | Highlights |
 |---------|-----------|
+| **v8.0** | LightGBM 3-class (UP/DOWN/SIDEWAYS) + meta-labeling, 90 ML features (no lookahead), bidirectional paper trading (BTC+LINK MARGINAL), multi-agent orchestration system, 10 coins (added ARB/OP/INJ/AVAX/BNB/LINK), walk-forward expanded folds, funding rate + taker imbalance features |
 | **v7.2** | AI Trading Chat with multi-LLM consensus (Groq + Qwen3-32B + dedicated Groq judge), time horizon/capital input, rich response cards, DeepSeek fallback chain |
 | **v7.1** | MUI sidebar layout, dedicated Portfolio/Coins/Settings pages, pinned Python dependencies, prod/local model sync |
 | **v7.0** | Paper trading engine, backtesting, walk-forward validation, EC2 deployment, dynamic API URLs |
@@ -298,4 +386,4 @@ crypto-ai-system/
 | **v2.0** | Initial UI + Backend release |
 
 ## Note
-Training data and models are excluded from the repository. Run `collect_multi_timeframe.py` to download historical data, then use `walk_forward_validation.py` to train and validate models. Use Python 3.9 to ensure model pickle compatibility across environments.
+Training data and models are excluded from the repository. Run `collect_multi_timeframe.py`, `collect_funding_rates.py`, and `collect_taker_volume.py` to download historical data, then use `walk_forward_validation.py` to train and validate models. Use Python 3.9 to ensure model pickle compatibility across environments.
