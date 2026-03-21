@@ -9,6 +9,7 @@ Usage:
     python collect_nse_data.py --full           # re-download full history
 """
 
+from __future__ import annotations
 import os
 import sys
 import argparse

@@ -1,4 +1,5 @@
 """Agent Memory — SQLite, one connection per call (thread-safe)."""
+from __future__ import annotations
 import sqlite3
 import json
 import time

@@ -14,6 +14,7 @@ Usage:
     python walk_forward.py --workers 6            # parallelism level
 """
 
+from __future__ import annotations
 import os
 import sys
 import json

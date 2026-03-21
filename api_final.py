@@ -10,7 +10,7 @@ FEATURES in v6.0:
 - Structured JSON responses from LLM
 """
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any, Set
@@ -4523,6 +4523,70 @@ async def agents_models():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# STOCKS API PROXY — forwards /stocks/* and /ws/stocks/* to port 8001
+# ============================================================
+
+STOCKS_API_BASE = "http://localhost:8001"
+
+@app.api_route("/stocks/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def proxy_stocks_http(path: str, request: Request):
+    import aiohttp
+    url = f"{STOCKS_API_BASE}/stocks/{path}"
+    params = dict(request.query_params)
+    body = await request.body()
+    headers = {k: v for k, v in request.headers.items()
+               if k.lower() not in ("host", "content-length")}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.request(
+                method=request.method,
+                url=url,
+                params=params,
+                data=body or None,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                content = await resp.read()
+                return Response(content=content, status_code=resp.status,
+                                media_type=resp.content_type)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Stocks API unavailable: {e}")
+
+
+@app.websocket("/ws/stocks/prices")
+async def proxy_stocks_ws(websocket: WebSocket):
+    import aiohttp, asyncio
+    await websocket.accept()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect("ws://localhost:8001/ws/stocks/prices") as upstream:
+                async def from_upstream():
+                    async for msg in upstream:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            await websocket.send_text(msg.data)
+                        elif msg.type == aiohttp.WSMsgType.BINARY:
+                            await websocket.send_bytes(msg.data)
+                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            break
+
+                async def from_client():
+                    try:
+                        async for msg in websocket.iter_text():
+                            await upstream.send_str(msg)
+                    except Exception:
+                        pass
+
+                await asyncio.gather(from_upstream(), from_client())
+    except Exception:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 # ============================================================

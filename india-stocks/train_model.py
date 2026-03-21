@@ -9,6 +9,7 @@ Usage:
     python train_model.py --symbol NIFTY50 --wf  # walk-forward only
 """
 
+from __future__ import annotations
 import os
 import sys
 import argparse

@@ -11,6 +11,7 @@ Usage (standalone):
     result = engine.get_verdict("NIFTY50")
 """
 
+from __future__ import annotations
 import os
 import sys
 import json

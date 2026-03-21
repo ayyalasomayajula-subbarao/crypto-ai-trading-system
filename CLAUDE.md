@@ -57,3 +57,13 @@ AVAX: TP=7.5% SL=2.5% 72h | BNB: TP=6% SL=2% 48h | LINK: TP=7.5% SL=2.5% 72h
 - `signal.alarm` for timeouts — use `future.result(timeout=N)`
 - Shared SQLite connection across threads — create new connection per call
 - Full feature CSV in LLM context — summarise to key stats only
+
+## Production (EC2)
+- Server: ubuntu@13.51.159.80, key: ~/Desktop/TradeWise.pem, region: eu-north-1
+- Crypto API: port 8000 (also serves React frontend + proxies /stocks/* to 8001)
+- India Stocks API: port 8001 (internal only, proxied through 8000)
+- EC2 is NOT a git repo — deploy via rsync/scp from Mac
+- Full deploy reference: see EC2_DEPLOYMENT.md
+- Python 3.9 venv — all `X | None` type hints require `from __future__ import annotations`
+- REACT_APP_WS_URL must be empty in .env.production (fallback handles /ws/prices path)
+- Viable models on EC2: BTC+LINK (crypto), NIFTY50+BANKNIFTY+NIFTYIT+TITAN+AXISBANK (stocks)
