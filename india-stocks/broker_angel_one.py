@@ -10,6 +10,7 @@ Setup:
                      ANGEL_ONE_PASSWORD, ANGEL_ONE_TOTP_SECRET
 """
 
+from __future__ import annotations
 import os
 import sys
 import logging

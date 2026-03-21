@@ -8,6 +8,7 @@ Usage:
     python collect_fii_dii.py --days 90
 """
 
+from __future__ import annotations
 import os
 import sys
 import time

@@ -2,6 +2,7 @@
 QueenAgent — Routes tasks to the correct specialist agent.
 Hardcoded plans for known tasks: scan / report / update-data / backtest / optimize.
 """
+from __future__ import annotations
 import logging
 import sys
 import os

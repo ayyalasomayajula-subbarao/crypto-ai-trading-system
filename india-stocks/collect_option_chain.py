@@ -8,6 +8,7 @@ Usage:
     python collect_option_chain.py --history      # save daily snapshots
 """
 
+from __future__ import annotations
 import os
 import sys
 import json

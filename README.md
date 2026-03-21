@@ -1,4 +1,4 @@
-# Crypto AI Trading System v8.0
+# Crypto AI Trading System v8.1
 
 A full-stack crypto trading intelligence platform with LightGBM ML predictions, walk-forward validated models, multi-agent orchestration, AI-powered analysis, multi-LLM consensus chat, bidirectional paper trading, backtesting, and real-time market data.
 
@@ -212,6 +212,26 @@ Token efficiency: ~65-80% reduction vs single-prompt approach via role-specific 
 ## Coins Supported
 BTC/USDT, ETH/USDT, SOL/USDT, PEPE/USDT, AVAX/USDT, BNB/USDT, LINK/USDT, ARB/USDT, OP/USDT, INJ/USDT
 
+## India Stocks Supported
+NIFTY50 (VIABLE), BANKNIFTY (MARGINAL), NIFTYIT (MARGINAL), TITAN (MARGINAL), AXISBANK (MARGINAL)
+Data via yfinance (1D+1W, 10yr history). Cron updates daily at 4:30pm IST Mon-Fri.
+
+### India Stocks API (port 8001, proxied through 8000)
+| Endpoint | Description |
+|----------|------------|
+| `GET /stocks/scan` | Verdicts for all active instruments |
+| `GET /stocks/verdict/{symbol}` | Single instrument verdict + signals |
+| `GET /stocks/market/overview` | PCR, max pain, India VIX, FII/DII summary |
+| `GET /stocks/fii-dii` | 30-day FII/DII flow history |
+| `GET /stocks/india-vix` | India VIX history |
+| `GET /stocks/option-chain/{symbol}` | Live option chain (NIFTY50/BANKNIFTY) |
+| `GET /stocks/klines/{symbol}` | OHLCV chart data |
+| `GET /stocks/backtest` | Walk-forward results for all instruments |
+| `GET /stocks/paper-trading/status` | Paper trading status + metrics |
+| `GET /stocks/paper-trading/trades` | Full trade log |
+| `POST /stocks/paper-trading/start` | Start paper trading |
+| `WS /ws/stocks/prices` | Real-time NSE price WebSocket |
+
 ## Setup
 
 ### Backend
@@ -376,6 +396,7 @@ crypto-ai-system/
 ## Version History
 | Version | Highlights |
 |---------|-----------|
+| **v8.1** | India Stocks system (NSE/BSE) with 5 viable instruments (NIFTY50 VIABLE, BANKNIFTY/NIFTYIT/TITAN/AXISBANK MARGINAL), yfinance 1D+1W features, LightGBM + meta-labeling, paper trading, option chain/FII-DII/VIX data, stocks proxy through port 8000, production EC2 deployment with auto-restart cron |
 | **v8.0** | LightGBM 3-class (UP/DOWN/SIDEWAYS) + meta-labeling, 90 ML features (no lookahead), bidirectional paper trading (BTC+LINK MARGINAL), multi-agent orchestration system, 10 coins (added ARB/OP/INJ/AVAX/BNB/LINK), walk-forward expanded folds, funding rate + taker imbalance features |
 | **v7.2** | AI Trading Chat with multi-LLM consensus (Groq + Qwen3-32B + dedicated Groq judge), time horizon/capital input, rich response cards, DeepSeek fallback chain |
 | **v7.1** | MUI sidebar layout, dedicated Portfolio/Coins/Settings pages, pinned Python dependencies, prod/local model sync |
