@@ -24,3 +24,6 @@ models/
 .env
 .env.*
 *.env
+
+# Local deployment scripts (contain EC2 IP, SSH key paths)
+deploy_*.sh

@@ -4,17 +4,19 @@ import { useAuth } from '../context/AuthContext';
 import './Login.css';
 
 type AuthMode = 'login' | 'signup';
+type MarketMode = 'crypto' | 'stocks';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
   const { signIn, signUp } = useAuth();
 
-  const [mode, setMode] = useState<AuthMode>('login');
-  const [email, setEmail] = useState('');
+  const [mode, setMode]       = useState<AuthMode>('login');
+  const [market, setMarket]   = useState<MarketMode>('crypto');
+  const [email, setEmail]     = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError]     = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
 
@@ -60,7 +62,7 @@ const Login: React.FC = () => {
         if (signInError) {
           setError(signInError.message);
         } else {
-          navigate('/');
+          navigate(market === 'stocks' ? '/stocks' : '/');
         }
       }
     } catch (err) {
@@ -93,6 +95,26 @@ const Login: React.FC = () => {
               ? 'Welcome back! Sign in to continue.'
               : 'Create an account to get started.'}
           </p>
+        </div>
+
+        {/* Market selector */}
+        <div className="market-selector">
+          <button
+            className={`market-btn ${market === 'crypto' ? 'active' : ''}`}
+            onClick={() => setMarket('crypto')}
+            type="button"
+          >
+            <span className="market-icon">₿</span>
+            <span>Crypto</span>
+          </button>
+          <button
+            className={`market-btn ${market === 'stocks' ? 'active stocks' : ''}`}
+            onClick={() => setMarket('stocks')}
+            type="button"
+          >
+            <span className="market-icon">📈</span>
+            <span>Indian Stocks</span>
+          </button>
         </div>
 
         <div className="login-tabs">

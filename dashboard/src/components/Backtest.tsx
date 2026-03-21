@@ -22,6 +22,12 @@ const COINS = [
   { id: 'ETH_USDT', label: 'ETH', color: '#627eea' },
   { id: 'SOL_USDT', label: 'SOL', color: '#00ffa3' },
   { id: 'PEPE_USDT', label: 'PEPE', color: '#4a9c2d' },
+  { id: 'AVAX_USDT', label: 'AVAX', color: '#e84142' },
+  { id: 'BNB_USDT',  label: 'BNB',  color: '#f3ba2f' },
+  { id: 'LINK_USDT', label: 'LINK', color: '#2a5ada' },
+  { id: 'ARB_USDT',  label: 'ARB',  color: '#28a0f0' },
+  { id: 'OP_USDT',   label: 'OP',   color: '#ff0420' },
+  { id: 'INJ_USDT',  label: 'INJ',  color: '#00b2ff' },
 ];
 
 interface BacktestMetrics {

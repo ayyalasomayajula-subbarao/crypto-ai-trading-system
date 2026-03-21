@@ -1361,7 +1361,11 @@ price_streamer = PriceStreamer()
 
 class TradingEngine:
     def __init__(self):
-        self.coins = ['BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'PEPE_USDT']
+        self.coins = [
+            'BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'PEPE_USDT',
+            'AVAX_USDT', 'BNB_USDT', 'LINK_USDT',
+            'ARB_USDT', 'OP_USDT', 'INJ_USDT',
+        ]
         self.models = {}
         self.data_cache = {}
         self.load_models()
@@ -2715,14 +2719,16 @@ class TradingEngine:
 
     def scan_all(self) -> Dict:
         """Quick scan of all coins"""
+        from precision_verdict import COIN_MODEL_STATUS as _CMS
         signals = []
         btc = self.get_btc_context()
-        
+
         for coin in self.coins:
             try:
                 request = AnalyzeRequest(coin=coin)
                 result = self.analyze(request)
-                
+                ms_info = _CMS.get(coin, {})
+
                 signals.append({
                     'coin': coin,
                     'price': result['price'],
@@ -2738,7 +2744,8 @@ class TradingEngine:
                         'probabilities': result.get('forecast', {}).get('probabilities', {})
                     },
                     'scenario_count': result['scenario_count'],
-                    'model_ran': result['model_ran']
+                    'model_ran': result['model_ran'],
+                    'model_status': ms_info.get('status', 'NO_MODEL'),
                 })
             except Exception as e:
                 print(f"Scan error {coin}: {e}")
@@ -3975,6 +3982,10 @@ class MarketDataService:
 
 market_data_service = MarketDataService()
 
+# ── Precision Verdict Engine ─────────────────────────────────────────────────
+from precision_verdict import VerdictEngine
+verdict_engine = VerdictEngine(trading_engine=engine, market_data_service=market_data_service)
+
 # ============================================================
 # NEWS API ROUTES
 # ============================================================
@@ -4437,26 +4448,43 @@ async def get_paper_trading_metrics():
         return {'error': str(e), 'total_trades': 0}
 
 # ============================================================
-# SERVE FRONTEND (production static files)
+# PRECISION VERDICT ENDPOINTS
 # ============================================================
 
-FRONTEND_BUILD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "build")
+@app.get("/verdict/{coin}")
+async def get_verdict(
+    coin: str,
+    trade_type: str = "SWING",
+    capital: float = 1000,
+):
+    """
+    Precision Verdict — fuses ML model + 13 signals into a single verdict.
+    Cached 5 min per coin. trade_type: SCALP | SHORT_TERM | SWING | INVESTMENT
+    """
+    try:
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+        result = await verdict_engine.generate(coin_upper, trade_type, capital)
+        return result
+    except Exception as e:
+        print(f"Verdict error for {coin}: {e}")
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
-if os.path.isdir(FRONTEND_BUILD):
-    from fastapi.staticfiles import StaticFiles
-    from starlette.responses import FileResponse
 
-    # Serve static assets (JS, CSS, images)
-    app.mount("/static", StaticFiles(directory=os.path.join(FRONTEND_BUILD, "static")), name="static")
+@app.get("/verdict-history/{coin}")
+async def get_verdict_history(coin: str, days: int = 30):
+    """Return past verdict accuracy stats for a coin."""
+    try:
+        coin_upper = coin.upper()
+        if '_' not in coin_upper:
+            coin_upper = f"{coin_upper}_USDT"
+        stats = verdict_engine.get_accuracy_stats(coin_upper, days=days)
+        return {'coin': coin_upper, **stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # Catch-all: serve index.html for any non-API route (React Router)
-    @app.get("/{full_path:path}")
-    async def serve_frontend(full_path: str):
-        # Don't intercept API routes
-        file_path = os.path.join(FRONTEND_BUILD, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
-        return FileResponse(os.path.join(FRONTEND_BUILD, "index.html"))
 
 # ============================================================
 # AGENT ENDPOINTS
@@ -4488,7 +4516,7 @@ async def agents_models():
     """Return model version history for all coins."""
     try:
         from agents.memory import memory
-        coins = ["BTC_USDT", "ETH_USDT", "SOL_USDT", "PEPE_USDT", "AVAX_USDT", "BNB_USDT", "LINK_USDT"]
+        coins = engine.coins
         return {
             coin: memory.list_model_history(coin, limit=5)
             for coin in coins
@@ -4496,6 +4524,28 @@ async def agents_models():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ============================================================
+# SERVE FRONTEND — must be LAST (catch-all would intercept API routes if placed earlier)
+# ============================================================
+
+FRONTEND_BUILD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "build")
+
+if os.path.isdir(FRONTEND_BUILD):
+    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import FileResponse as _FileResponse
+
+    # Serve static assets (JS, CSS, images, favicon, manifest, etc.)
+    app.mount("/static", StaticFiles(directory=os.path.join(FRONTEND_BUILD, "static")), name="static")
+
+    # Catch-all: serve index.html for any non-API path (React Router SPA)
+    # IMPORTANT: registered LAST so all API routes above take precedence
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        file_path = os.path.join(FRONTEND_BUILD, full_path)
+        if os.path.isfile(file_path):
+            return _FileResponse(file_path)
+        return _FileResponse(os.path.join(FRONTEND_BUILD, "index.html"))
 
 # ============================================================
 # MAIN

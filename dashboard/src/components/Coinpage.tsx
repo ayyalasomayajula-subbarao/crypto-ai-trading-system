@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import PriceChart from './PriceChart';
 import TradingChat from './TradingChat';
+import VerdictTab from './VerdictTab';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/supabase';
 import './Coinpage.css';
@@ -350,6 +351,42 @@ const COIN_CONFIG: Record<string, { icon: string; name: string; color: string; d
     name: 'Pepe',
     color: '#4a9c2d',
     description: 'Meme coin. Extreme volatility, highest risk/reward.'
+  },
+  'AVAX_USDT': {
+    icon: '🔺',
+    name: 'Avalanche',
+    color: '#e84142',
+    description: 'Fast smart contract platform. High throughput, EVM-compatible.'
+  },
+  'BNB_USDT': {
+    icon: '🟡',
+    name: 'BNB',
+    color: '#f3ba2f',
+    description: 'Binance exchange token. Large ecosystem, moderate volatility.'
+  },
+  'LINK_USDT': {
+    icon: '⬡',
+    name: 'Chainlink',
+    color: '#2a5ada',
+    description: 'Decentralized oracle network. Connects smart contracts to real-world data.'
+  },
+  'ARB_USDT': {
+    icon: '🔵',
+    name: 'Arbitrum',
+    color: '#28a0f0',
+    description: 'Ethereum Layer 2 rollup. Lower fees, high throughput, EVM-compatible.'
+  },
+  'OP_USDT': {
+    icon: '🔴',
+    name: 'Optimism',
+    color: '#ff0420',
+    description: 'Ethereum Layer 2 optimistic rollup. Fast, cheap transactions on Ethereum.'
+  },
+  'INJ_USDT': {
+    icon: '💫',
+    name: 'Injective',
+    color: '#00b2ff',
+    description: 'DeFi-focused Layer 1. Orderbook DEX, derivatives, cross-chain trading.'
   }
 };
 
@@ -431,6 +468,9 @@ const CoinPage: React.FC = () => {
   const [derivativesLoading, setDerivativesLoading] = useState(false);
   const [whaleData, setWhaleData] = useState<WhaleActivity | null>(null);
   const [whaleLoading, setWhaleLoading] = useState(false);
+
+  // Analysis section tab
+  const [activeSection, setActiveSection] = useState<'ml' | 'verdict'>('ml');
 
   // User Inputs
   const [capital, setCapital] = useState<number | ''>('');
@@ -876,7 +916,35 @@ const CoinPage: React.FC = () => {
           {/* Price Chart - Always visible */}
           <PriceChart coin={coin} coinColor={coinConfig.color} />
 
-          {loading && !analysis ? (
+          {/* Section tabs */}
+          <div className="analysis-section-tabs">
+            <button
+              className={`ast-btn${activeSection === 'ml' ? ' active' : ''}`}
+              onClick={() => setActiveSection('ml')}
+            >
+              📊 ML Analysis
+            </button>
+            <button
+              className={`ast-btn${activeSection === 'verdict' ? ' active' : ''}`}
+              onClick={() => setActiveSection('verdict')}
+            >
+              🎯 Precision Verdict
+            </button>
+          </div>
+
+          {/* Precision Verdict Tab */}
+          {activeSection === 'verdict' && (
+            <section className="verdict-tab-section">
+              <VerdictTab
+                coin={coin || ''}
+                capital={capital}
+                tradeType={tradeType}
+              />
+            </section>
+          )}
+
+          {/* ML Analysis (existing) */}
+          {activeSection === 'ml' && (loading && !analysis ? (
             <div className="loading-state">
               <div className="spinner"></div>
               <p>Running personalized analysis...</p>
@@ -981,7 +1049,7 @@ const CoinPage: React.FC = () => {
 
                   {/* Expectancy & Readiness */}
                   <div className="metric-cards">
-                    <div className={`metric-card ${(analysis.expectancy || 0) >= 0 ? 'positive' : 'negative'}`}>
+                    <div className={`metric-card ${(analysis.expectancy ?? 0) >= 0 ? 'positive' : 'negative'}`}>
                       <Tooltip text="Expectancy = WIN% - LOSS%. Positive means you're more likely to win than lose. This is the primary indicator of trade quality.">
                         <div className="metric-header">
                           <span>Expectancy</span>
@@ -989,12 +1057,14 @@ const CoinPage: React.FC = () => {
                         </div>
                       </Tooltip>
                       <div className="metric-value">
-                        {(analysis.expectancy || 0) >= 0 ? '+' : ''}{analysis.expectancy}%
+                        {analysis.expectancy != null
+                          ? `${analysis.expectancy >= 0 ? '+' : ''}${analysis.expectancy.toFixed(1)}%`
+                          : '—'}
                       </div>
-                      <div className="metric-status">{analysis.expectancy_status}</div>
+                      <div className="metric-status">{analysis.expectancy_status || '—'}</div>
                     </div>
 
-                    <div className={`metric-card ${(analysis.readiness || 0) >= 0 ? 'positive' : 'negative'}`}>
+                    <div className={`metric-card ${(analysis.readiness ?? 0) >= 0 ? 'positive' : 'negative'}`}>
                       <Tooltip text="Readiness = WIN% - Required Threshold. Positive means you've met the entry requirements for your trade type and experience level.">
                         <div className="metric-header">
                           <span>Readiness</span>
@@ -1002,9 +1072,11 @@ const CoinPage: React.FC = () => {
                         </div>
                       </Tooltip>
                       <div className="metric-value">
-                        {(analysis.readiness || 0) >= 0 ? '+' : ''}{analysis.readiness}%
+                        {analysis.readiness != null
+                          ? `${analysis.readiness >= 0 ? '+' : ''}${analysis.readiness.toFixed(1)}%`
+                          : '—'}
                       </div>
-                      <div className="metric-status">{analysis.readiness_status}</div>
+                      <div className="metric-status">{analysis.readiness_status || '—'}</div>
                     </div>
                   </div>
                 </section>
@@ -2050,7 +2122,8 @@ const CoinPage: React.FC = () => {
             <div className="empty-state">
               <p>Click "Run Full Analysis" to get started</p>
             </div>
-          )}
+          ))}
+          {/* end ML analysis */}
 
           {/* AI Trading Chat — always visible once on coin page */}
           <TradingChat

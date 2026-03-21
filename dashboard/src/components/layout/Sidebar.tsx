@@ -23,17 +23,32 @@ import AccountBalanceWalletOutlined from '@mui/icons-material/AccountBalanceWall
 import PlayArrowOutlined from '@mui/icons-material/PlayArrowOutlined';
 import SettingsOutlined from '@mui/icons-material/SettingsOutlined';
 import LogoutOutlined from '@mui/icons-material/LogoutOutlined';
+import ShowChartOutlined from '@mui/icons-material/ShowChartOutlined';
+import BarChartOutlined from '@mui/icons-material/BarChartOutlined';
+import SearchOutlined from '@mui/icons-material/SearchOutlined';
+import CandlestickChartOutlined from '@mui/icons-material/CandlestickChartOutlined';
+import AccountBalanceOutlined from '@mui/icons-material/AccountBalanceOutlined';
+import LinkOutlined from '@mui/icons-material/LinkOutlined';
 import { useAuth } from '../../context/AuthContext';
 
 export const SIDEBAR_WIDTH = 280;
 
-const mainNavItems = [
-  { label: 'Overview', path: '/', icon: <DashboardOutlined /> },
-  { label: 'Portfolio', path: '/portfolio', icon: <AccountBalanceWalletOutlined /> },
-  { label: 'Coins', path: '/coins', icon: <CurrencyBitcoinOutlined /> },
-  { label: 'Backtest', path: '/backtest', icon: <ScienceOutlined /> },
-  { label: 'Signals', path: '/signals', icon: <TimelineOutlined /> },
-  { label: 'Paper Trading', path: '/paper-trading', icon: <PlayArrowOutlined /> },
+const cryptoNavItems = [
+  { label: 'Overview',     path: '/',             icon: <DashboardOutlined /> },
+  { label: 'Portfolio',    path: '/portfolio',    icon: <AccountBalanceWalletOutlined /> },
+  { label: 'Coins',        path: '/coins',        icon: <CurrencyBitcoinOutlined /> },
+  { label: 'Backtest',     path: '/backtest',     icon: <ScienceOutlined /> },
+  { label: 'Signals',      path: '/signals',      icon: <TimelineOutlined /> },
+  { label: 'Paper Trading',path: '/paper-trading',icon: <PlayArrowOutlined /> },
+];
+
+const stocksNavItems = [
+  { label: 'Markets',       path: '/stocks',                icon: <ShowChartOutlined /> },
+  { label: 'Screener',      path: '/stocks/screener',       icon: <SearchOutlined /> },
+  { label: 'Market Pulse',  path: '/stocks/market/pulse',   icon: <CandlestickChartOutlined /> },
+  { label: 'Portfolio',     path: '/stocks/portfolio',      icon: <AccountBalanceWalletOutlined /> },
+  { label: 'Backtest',      path: '/stocks/backtest',       icon: <BarChartOutlined /> },
+  { label: 'Broker',        path: '/stocks/broker',         icon: <AccountBalanceOutlined /> },
 ];
 
 interface SidebarProps {
@@ -69,48 +84,66 @@ const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) => {
         <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary' }}>
           TradeWise
         </Typography>
-        <Chip label="v7.0" size="small" color="primary" variant="outlined" />
+        <Chip label="v8.0" size="small" color="primary" variant="outlined" />
       </Box>
 
       <Divider />
 
       {/* Main Navigation */}
-      <List sx={{ flex: 1, px: 2, py: 1 }}>
-        {mainNavItems.map((item) => (
+      <List sx={{ flex: 1, px: 2, py: 1, overflowY: 'auto' }}>
+
+        {/* ── Crypto Section ── */}
+        <Typography variant="caption" sx={{ px: 1, py: 0.5, color: 'text.disabled',
+          fontWeight: 700, letterSpacing: '0.08em', display: 'block', mt: 1 }}>
+          CRYPTO
+        </Typography>
+        {cryptoNavItems.map((item) => (
           <ListItem key={item.path} disablePadding sx={{ mb: 0.5 }}>
             <ListItemButton
               onClick={() => handleNav(item.path)}
               sx={{
-                borderRadius: 1.5,
-                py: 1,
-                px: 2,
+                borderRadius: 1.5, py: 1, px: 2,
                 color: isActive(item.path) ? 'primary.main' : 'text.secondary',
-                backgroundColor: isActive(item.path) ? 'rgba(96, 165, 250, 0.08)' : 'transparent',
-                '&:hover': {
-                  backgroundColor: isActive(item.path)
-                    ? 'rgba(96, 165, 250, 0.12)'
-                    : 'rgba(255, 255, 255, 0.04)',
-                },
+                backgroundColor: isActive(item.path) ? 'rgba(96,165,250,0.08)' : 'transparent',
+                '&:hover': { backgroundColor: 'rgba(255,255,255,0.04)' },
               }}
             >
-              <ListItemIcon
-                sx={{
-                  minWidth: 40,
-                  color: isActive(item.path) ? 'primary.main' : 'text.secondary',
-                }}
-              >
+              <ListItemIcon sx={{ minWidth: 40, color: isActive(item.path) ? 'primary.main' : 'text.secondary' }}>
                 {item.icon}
               </ListItemIcon>
-              <ListItemText
-                primary={item.label}
-                primaryTypographyProps={{
-                  fontSize: '0.875rem',
-                  fontWeight: isActive(item.path) ? 600 : 400,
-                }}
-              />
+              <ListItemText primary={item.label}
+                primaryTypographyProps={{ fontSize: '0.875rem', fontWeight: isActive(item.path) ? 600 : 400 }} />
             </ListItemButton>
           </ListItem>
         ))}
+
+        <Divider sx={{ my: 1.5 }} />
+
+        {/* ── Indian Stocks Section ── */}
+        <Typography variant="caption" sx={{ px: 1, py: 0.5, color: 'text.disabled',
+          fontWeight: 700, letterSpacing: '0.08em', display: 'block' }}>
+          INDIAN STOCKS
+        </Typography>
+        {stocksNavItems.map((item) => (
+          <ListItem key={item.path} disablePadding sx={{ mb: 0.5 }}>
+            <ListItemButton
+              onClick={() => handleNav(item.path)}
+              sx={{
+                borderRadius: 1.5, py: 1, px: 2,
+                color: isActive(item.path) ? '#69f0ae' : 'text.secondary',
+                backgroundColor: isActive(item.path) ? 'rgba(105,240,174,0.08)' : 'transparent',
+                '&:hover': { backgroundColor: 'rgba(255,255,255,0.04)' },
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: 40, color: isActive(item.path) ? '#69f0ae' : 'text.secondary' }}>
+                {item.icon}
+              </ListItemIcon>
+              <ListItemText primary={item.label}
+                primaryTypographyProps={{ fontSize: '0.875rem', fontWeight: isActive(item.path) ? 600 : 400 }} />
+            </ListItemButton>
+          </ListItem>
+        ))}
+
       </List>
 
       <Divider />

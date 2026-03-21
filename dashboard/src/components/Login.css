@@ -270,3 +270,45 @@
     font-size: 1.25rem;
   }
 }
+
+/* ── Market Selector ── */
+.market-selector {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 12px;
+  padding: 4px;
+}
+.market-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: rgba(255,255,255,0.5);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.market-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.8);
+}
+.market-btn.active {
+  background: rgba(96,165,250,0.2);
+  color: #60a5fa;
+  font-weight: 600;
+}
+.market-btn.active.stocks {
+  background: rgba(105,240,174,0.2);
+  color: #69f0ae;
+}
+.market-icon {
+  font-size: 1rem;
+}
