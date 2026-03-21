@@ -57,7 +57,13 @@ const COIN_CONFIG: Record<string, { icon: string; name: string; color: string }>
   'BTC_USDT': { icon: '₿', name: 'Bitcoin', color: '#f7931a' },
   'ETH_USDT': { icon: 'Ξ', name: 'Ethereum', color: '#627eea' },
   'SOL_USDT': { icon: '◎', name: 'Solana', color: '#00ffa3' },
-  'PEPE_USDT': { icon: '🐸', name: 'Pepe', color: '#4a9c2d' }
+  'PEPE_USDT': { icon: '🐸', name: 'Pepe', color: '#4a9c2d' },
+  'AVAX_USDT': { icon: '🔺', name: 'Avalanche', color: '#e84142' },
+  'BNB_USDT':  { icon: '🟡', name: 'BNB', color: '#f3ba2f' },
+  'LINK_USDT': { icon: '⬡', name: 'Chainlink', color: '#2a5ada' },
+  'ARB_USDT':  { icon: '🔵', name: 'Arbitrum',  color: '#28a0f0' },
+  'OP_USDT':   { icon: '🔴', name: 'Optimism',  color: '#ff0420' },
+  'INJ_USDT':  { icon: '💫', name: 'Injective', color: '#00b2ff' }
 };
 
 // ============================================================
@@ -200,7 +206,7 @@ const Dashboard: React.FC = () => {
       {/* Main Content */}
       <div className="content content-full">
           <div className="signals-grid">
-            {['BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'PEPE_USDT'].map(coin => {
+            {Object.keys(COIN_CONFIG).map(coin => {
               const priceData = prices[coin];
               const signal = signals.find(s => s.coin === coin);
               const config = COIN_CONFIG[coin];

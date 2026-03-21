@@ -1,0 +1,7 @@
+.stock-detail { max-width: 1400px; }
+.detail-card {
+  background: rgba(255,255,255,0.03) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  border-radius: 16px !important;
+  height: 100%;
+}

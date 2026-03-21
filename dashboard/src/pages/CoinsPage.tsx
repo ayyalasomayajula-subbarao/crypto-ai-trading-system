@@ -27,6 +27,7 @@ interface Signal {
   verdict: string;
   confidence: string;
   win_probability: number | null;
+  model_status?: string;
 }
 
 const COINS = [
@@ -34,6 +35,12 @@ const COINS = [
   { key: 'ETH_USDT', name: 'Ethereum', symbol: 'ETH', icon: 'Ξ', color: '#627eea' },
   { key: 'SOL_USDT', name: 'Solana', symbol: 'SOL', icon: '◎', color: '#00ffa3' },
   { key: 'PEPE_USDT', name: 'Pepe', symbol: 'PEPE', icon: '🐸', color: '#4a9c2d' },
+  { key: 'AVAX_USDT', name: 'Avalanche', symbol: 'AVAX', icon: '🔺', color: '#e84142' },
+  { key: 'BNB_USDT',  name: 'BNB', symbol: 'BNB', icon: '🟡', color: '#f3ba2f' },
+  { key: 'LINK_USDT', name: 'Chainlink', symbol: 'LINK', icon: '⬡', color: '#2a5ada' },
+  { key: 'ARB_USDT',  name: 'Arbitrum',  symbol: 'ARB',  icon: '🔵', color: '#28a0f0' },
+  { key: 'OP_USDT',   name: 'Optimism',  symbol: 'OP',   icon: '🔴', color: '#ff0420' },
+  { key: 'INJ_USDT',  name: 'Injective', symbol: 'INJ',  icon: '💫', color: '#00b2ff' },
 ];
 
 const formatPrice = (price: number): string => {
@@ -206,9 +213,17 @@ const CoinsPage: React.FC = () => {
                   {/* Win probability */}
                   {signal?.win_probability != null && (
                     <Box sx={{ mt: 1.5, pt: 1.5, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                        Win Probability
-                      </Typography>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                          Win Probability
+                        </Typography>
+                        {signal.model_status === 'MARGINAL' && (
+                          <Typography variant="caption" sx={{ color: '#10b981', fontSize: '0.65rem' }}>✓ Validated</Typography>
+                        )}
+                        {signal.model_status !== 'MARGINAL' && (
+                          <Typography variant="caption" sx={{ color: '#64748b', fontSize: '0.65rem' }}>Not validated</Typography>
+                        )}
+                      </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
                         <Box
                           sx={{
@@ -224,11 +239,18 @@ const CoinsPage: React.FC = () => {
                               width: `${signal.win_probability}%`,
                               height: '100%',
                               borderRadius: 3,
-                              backgroundColor: signal.win_probability > 60 ? '#10b981' : signal.win_probability > 45 ? '#f59e0b' : '#ef4444',
+                              backgroundColor: signal.model_status === 'MARGINAL'
+                                ? (signal.win_probability > 60 ? '#10b981' : signal.win_probability > 45 ? '#f59e0b' : '#ef4444')
+                                : '#475569',
+                              opacity: signal.model_status === 'MARGINAL' ? 1 : 0.5,
                             }}
                           />
                         </Box>
-                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, minWidth: 36 }}>
+                        <Typography variant="caption" sx={{
+                          color: signal.model_status === 'MARGINAL' ? 'text.secondary' : '#475569',
+                          fontWeight: 600,
+                          minWidth: 36
+                        }}>
                           {signal.win_probability.toFixed(0)}%
                         </Typography>
                       </Box>

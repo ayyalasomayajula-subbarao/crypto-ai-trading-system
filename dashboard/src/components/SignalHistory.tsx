@@ -8,6 +8,12 @@ const COIN_CONFIG: Record<string, { icon: string; name: string; color: string }>
   'ETH_USDT': { icon: '\u039e', name: 'Ethereum', color: '#627eea' },
   'SOL_USDT': { icon: '\u25ce', name: 'Solana', color: '#00ffa3' },
   'PEPE_USDT': { icon: '\ud83d\udc38', name: 'Pepe', color: '#4a9c2d' },
+  'AVAX_USDT': { icon: '🔺', name: 'Avalanche', color: '#e84142' },
+  'BNB_USDT':  { icon: '🟡', name: 'BNB', color: '#f3ba2f' },
+  'LINK_USDT': { icon: '⬡', name: 'Chainlink', color: '#2a5ada' },
+  'ARB_USDT':  { icon: '🔵', name: 'Arbitrum',  color: '#28a0f0' },
+  'OP_USDT':   { icon: '🔴', name: 'Optimism',  color: '#ff0420' },
+  'INJ_USDT':  { icon: '💫', name: 'Injective', color: '#00b2ff' },
 };
 
 const SignalHistory: React.FC = () => {

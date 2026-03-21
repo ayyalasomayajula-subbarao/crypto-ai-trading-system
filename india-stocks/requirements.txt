@@ -1,0 +1,22 @@
+# India Stocks Trading System — Dependencies
+yfinance>=0.2.38
+pandas>=2.0.0
+numpy>=1.24.0
+lightgbm>=4.0.0
+scikit-learn>=1.3.0
+joblib>=1.3.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+requests>=2.31.0
+pytz>=2023.3
+python-dotenv>=1.0.0
+groq>=0.4.0
+openai>=1.0.0
+pyotp>=2.9.0
+
+# Optional: Angel One live trading
+# smartapi-python>=1.3.4
+
+# Optional: NSE data libraries (fallback to NSE direct API)
+# nselib>=0.1.0
+# jugaad-data>=0.26.0

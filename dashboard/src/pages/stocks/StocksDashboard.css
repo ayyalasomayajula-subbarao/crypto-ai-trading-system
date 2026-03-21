@@ -1,0 +1,49 @@
+.stocks-dashboard {
+  padding: 24px;
+  max-width: 1600px;
+}
+
+.stocks-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+/* Pulse cards */
+.pulse-card {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 16px !important;
+  transition: border-color 0.2s, transform 0.15s !important;
+}
+.pulse-card:hover {
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  transform: translateY(-2px);
+}
+.vix-card {
+  background: linear-gradient(135deg, rgba(255,23,68,0.06), rgba(20,20,30,0.9)) !important;
+}
+
+/* Instrument cards */
+.instrument-card {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border-radius: 14px !important;
+  transition: all 0.2s ease !important;
+}
+.instrument-card:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  transform: translateY(-3px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3) !important;
+}
+
+/* Stock signal cards */
+.stock-signal-card {
+  background: rgba(255, 255, 255, 0.025) !important;
+  border-radius: 12px !important;
+  transition: all 0.15s ease !important;
+}
+.stock-signal-card:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+  transform: translateY(-2px);
+}
