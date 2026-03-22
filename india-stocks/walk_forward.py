@@ -45,7 +45,8 @@ from config import (
     features_path, model_path, features_list_path,
     LGBM_PARAMS, META_LGBM_PARAMS, WF_FAST_LGBM_PARAMS,
     WF_THRESHOLD_GRID, META_LABELING, META_WIN_THRESH, META_TRAIN_FRAC,
-    VIABLE_SHARPE, VIABLE_WR, MARGINAL_SHARPE, MARGINAL_WR, MIN_TRADES,
+    VIABLE_SHARPE, VIABLE_WR, MARGINAL_SHARPE, MARGINAL_WR,
+    MARGINAL_SHARPE_HIGH, MARGINAL_WR_LOW, MIN_TRADES,
     ADX_GATE,
 )
 
@@ -284,6 +285,12 @@ def _viability(fold_metrics: list[dict]) -> str:
             and positive >= max(int(n_folds * 0.6), 2)):
         return "VIABLE"
     if (avg_sharpe >= MARGINAL_SHARPE and avg_wr >= MARGINAL_WR
+            and positive >= max(int(n_folds * 0.5), 2)):
+        return "MARGINAL"
+    # High-Sharpe secondary path: excellent risk-adjusted returns at lower hit-rate.
+    # At 3:1 R:R, 33% WR = ~0.32% EV/trade (still positive). Sharpe >= 0.70 guards
+    # against single-lucky-year systems — requires multi-fold consistency.
+    if (avg_sharpe >= MARGINAL_SHARPE_HIGH and avg_wr >= MARGINAL_WR_LOW
             and positive >= max(int(n_folds * 0.5), 2)):
         return "MARGINAL"
     return "NOT_VIABLE"

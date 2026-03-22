@@ -37,24 +37,38 @@ MIN_CONFIDENCE      = 0.50        # minimum signal score for entry
 # Sizing tier by valid fold count: 5+→0.7x, 3-4→0.5x, 2→0.3x, <2→0.0x
 # MARGINAL_WR gate: 0.38 (vs 0.44 crypto) — daily stocks use 3:1+ R:R.
 _WF_SIZE_MULTIPLIERS: dict[str, float] = {
-    # ── 10-year 1D base, 65 features (1D+1W), MARGINAL_WR=0.38, 2026-03-18 ─
-    "BANKNIFTY":  0.7,   # MARGINAL ✓ — 5 valid folds, 313 trades, avg_wr=47.8%
-    "NIFTYIT":    0.5,   # MARGINAL ✓ — 4 valid folds, 224 trades, avg_wr=39.9% (fold 3 negative)
-    "TITAN":      0.5,   # MARGINAL ✓ — 3 valid folds, 114 trades, avg_wr=39.0% (all 3 positive)
-    "AXISBANK":   0.3,   # MARGINAL ✓ — 2 valid folds, 38 trades, avg_wr=44.8%, avg_sharpe=2.129 (meta_win_thresh=0.45)
-    "NIFTY50":    0.5,   # VIABLE ✓ — 3 valid folds, 88 trades, avg_wr=48.9%, avg_sharpe=1.744 (meta_win_thresh=0.45 + TP 3.5%)
-    "HDFCBANK":   0.0,   # NOT_VIABLE — only 1 valid fold
-    "ICICIBANK":  0.0,   # NOT_VIABLE — only 1 valid fold
-    "BHARTIARTL": 0.0,   # NOT_VIABLE — avg_wr=33.2%
-    "MARUTI":     0.0,   # NOT_VIABLE — avg_wr=37.7% (just below 38% gate)
-    "RELIANCE":   0.0,   # NOT_VIABLE — avg_wr=35.4%
-    "TCS":        0.0,   # NOT_VIABLE — only 1 valid fold
-    "INFY":       0.0,   # NOT_VIABLE — avg_wr=33.8%
-    "HCLTECH":    0.0,   # NOT_VIABLE — avg_wr=33.5%
-    "WIPRO":      0.0,   # NOT_VIABLE — avg_wr=31.8%
-    "SBIN":       0.0,   # NOT_VIABLE — avg_wr=35.7%
-    "BAJFINANCE": 0.0,   # NOT_VIABLE — only 1 valid fold
-    "SUNPHARMA":  0.0,   # NOT_VIABLE — avg_wr=32.3%, avg_sharpe=0.742
+    # ── WF run: 2026-03-22 (2010 data start, 5 folds, MARGINAL_WR_LOW=0.33) ─
+    # Tier: 5+ valid folds → 0.7x | 3-4 → 0.5x | 2 → 0.3x | NOT_VIABLE → 0.0x
+    # ── Indices ──────────────────────────────────────────────────────────────
+    "NIFTY50":    0.5,   # VIABLE  — 3 valid folds, WR=48.9%, Sharpe=1.744
+    "BANKNIFTY":  0.7,   # MARGINAL — 5 valid folds, WR=47.8%, Sharpe=1.332
+    "NIFTYIT":    0.5,   # MARGINAL — 4 valid folds, WR=39.9%, Sharpe=1.118
+    # ── Stocks: 5 valid folds (0.7x) ─────────────────────────────────────────
+    "HCLTECH":    0.7,   # MARGINAL — 5 valid folds, WR=35.5%, Sharpe=1.351
+    "RELIANCE":   0.7,   # MARGINAL — 5 valid folds, WR=35.2%, Sharpe=1.300
+    "SBIN":       0.7,   # MARGINAL — 5 valid folds, WR=34.4%, Sharpe=1.012
+    "HDFCBANK":   0.7,   # MARGINAL — 5 valid folds, WR=39.6%, Sharpe=0.952
+    "INFY":       0.7,   # MARGINAL — 5 valid folds, WR=33.1%, Sharpe=0.921
+    "LT":         0.7,   # MARGINAL — 5 valid folds, WR=38.4%, Sharpe=0.828
+    "ASIANPAINT": 0.7,   # MARGINAL — 5 valid folds, WR=33.3%, Sharpe=0.810
+    "TCS":        0.7,   # MARGINAL — 5 valid folds, WR=33.1%, Sharpe=0.733
+    "TITAN":      0.7,   # MARGINAL — 5 valid folds, WR=33.4%, Sharpe=0.728
+    # ── Stocks: 3-4 valid folds (0.5x) ───────────────────────────────────────
+    "MARUTI":     0.5,   # MARGINAL — 3 valid folds, WR=40.0%, Sharpe=1.500
+    "ULTRACEMCO": 0.5,   # MARGINAL — 4 valid folds, WR=38.4%, Sharpe=1.304
+    "BAJAJFINSV": 0.5,   # MARGINAL — 3 valid folds, WR=37.6%, Sharpe=1.282
+    # ── Stocks: 2 valid folds (0.3x) ─────────────────────────────────────────
+    "AXISBANK":   0.3,   # MARGINAL — 2 valid folds, WR=41.6%, Sharpe=2.161
+    "CIPLA":      0.3,   # MARGINAL — 2 valid folds, WR=38.1%, Sharpe=1.755
+    "KOTAKBANK":  0.3,   # MARGINAL — 2 valid folds, WR=39.9%, Sharpe=1.530
+    # ── NOT_VIABLE ────────────────────────────────────────────────────────────
+    "ICICIBANK":  0.0,   # NOT_VIABLE — Sharpe=0.405, WR=32.4%
+    "BAJFINANCE": 0.0,   # NOT_VIABLE — Sharpe=0.684, WR=29.9%
+    "DRREDDY":    0.0,   # NOT_VIABLE — Sharpe=0.558, WR=27.6%
+    "WIPRO":      0.0,   # NOT_VIABLE — Sharpe=0.487, WR=31.3%
+    "BHARTIARTL": 0.0,   # NOT_VIABLE — Sharpe=0.750, WR=31.3%
+    "SUNPHARMA":  0.0,   # NOT_VIABLE — Sharpe=0.825, WR=31.2%
+    "TECHM":      0.0,   # NOT_VIABLE — Sharpe=0.830, WR=28.9%
 }
 
 
