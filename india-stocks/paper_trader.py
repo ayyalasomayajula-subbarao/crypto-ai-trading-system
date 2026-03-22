@@ -46,11 +46,11 @@ _WF_SIZE_MULTIPLIERS: dict[str, float] = {
     "NIFTYIT":    0.5,   # MARGINAL — 4 valid folds, WR=39.9%, Sharpe=1.118, spread=0.00
     # ── Stocks: 5 valid folds (0.7x) ─────────────────────────────────────────
     "DRREDDY":    0.7,   # MARGINAL — 5 valid folds, WR=33.1%, Sharpe=1.171, spread=0.10
-    "HCLTECH":    0.7,   # MARGINAL — 5 valid folds, WR=35.5%, Sharpe=1.351, spread=0.00
+    "HCLTECH":    0.7,   # MARGINAL — 5 valid folds, WR=35.7%, Sharpe=1.387, spread=0.05
     "RELIANCE":   0.7,   # MARGINAL — 5 valid folds, WR=38.4%, Sharpe=1.711, spread=0.10
-    "SBIN":       0.7,   # MARGINAL — 5 valid folds, WR=34.4%, Sharpe=1.012, spread=0.00
+    "SBIN":       0.7,   # MARGINAL — 5 valid folds, WR=33.7%, Sharpe=1.314, spread=0.15
     "HDFCBANK":   0.7,   # MARGINAL — 5 valid folds, WR=39.6%, Sharpe=0.952, spread=0.00
-    "LT":         0.7,   # MARGINAL — 5 valid folds, WR=38.4%, Sharpe=0.828, spread=0.00
+    "LT":         0.7,   # MARGINAL — 5 valid folds, WR=38.7%, Sharpe=1.015, spread=0.10
     "ASIANPAINT": 0.7,   # MARGINAL — 5 valid folds, WR=33.7%, Sharpe=0.910, spread=0.10
     "TCS":        0.7,   # MARGINAL — 5 valid folds, WR=33.1%, Sharpe=0.733, spread=0.00
     "TITAN":      0.7,   # MARGINAL — 5 valid folds, WR=33.4%, Sharpe=0.728, spread=0.00
@@ -65,9 +65,9 @@ _WF_SIZE_MULTIPLIERS: dict[str, float] = {
     "CIPLA":      0.3,   # MARGINAL — 2 valid folds, WR=38.1%, Sharpe=1.755, spread=0.00
     "KOTAKBANK":  0.3,   # MARGINAL — 2 valid folds, WR=39.9%, Sharpe=1.530, spread=0.00
     # ── NOT_VIABLE ────────────────────────────────────────────────────────────
-    "ICICIBANK":  0.0,   # NOT_VIABLE — Sharpe=0.405, WR=32.4% (only 1/2 folds positive)
-    "WIPRO":      0.0,   # NOT_VIABLE — Sharpe=0.487, WR=31.3%
-    "BHARTIARTL": 0.0,   # NOT_VIABLE — Sharpe=0.750, WR=31.3%
+    "ICICIBANK":  0.0,   # NOT_VIABLE — Sharpe=1.784, WR=40.7% BUT only 1/2 folds positive (fails consistency)
+    "WIPRO":      0.0,   # NOT_VIABLE — Sharpe=0.618, WR=31.6%
+    "BHARTIARTL": 0.0,   # NOT_VIABLE — Sharpe=0.854, WR=32.1%
     "SUNPHARMA":  0.0,   # NOT_VIABLE — Sharpe=0.825, WR=31.2%
     "TECHM":      0.0,   # NOT_VIABLE — Sharpe=0.830, WR=28.9%
 }
