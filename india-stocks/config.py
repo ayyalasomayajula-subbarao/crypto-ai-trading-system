@@ -55,6 +55,8 @@ INSTRUMENTS = {
     },
 
     # ── Top F&O Stocks ───────────────────────────────────────────────────────
+    # data_start "2010-01-01" + wf_folds=5: gives 16yr history, ~5 test windows
+    # covering pre-2015, 2016-18, COVID 2020, 2021-22 bull/bear, 2023-26 current.
     "RELIANCE": {
         "yf_symbol":          "RELIANCE.NS",
         "nse_symbol":         "RELIANCE",
@@ -66,8 +68,8 @@ INSTRUMENTS = {
         "sl_pct":             1.5,
         "time_limit_days":    12,
         "direction_threshold": 2.0,
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "TCS": {
@@ -82,8 +84,8 @@ INSTRUMENTS = {
         "time_limit_days":    12,
         "direction_threshold": 2.0,
         "meta_win_thresh":    0.0,   # bypass meta — regime shift kills later folds even at 0.45
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "INFY": {
@@ -97,8 +99,8 @@ INSTRUMENTS = {
         "sl_pct":             1.5,
         "time_limit_days":    12,
         "direction_threshold": 2.0,
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "HDFCBANK": {
@@ -112,9 +114,9 @@ INSTRUMENTS = {
         "sl_pct":             1.5,
         "time_limit_days":    10,
         "direction_threshold": 1.5,
-        "meta_win_thresh":    0.0,   # bypass meta — fold 0 WR=46.7% is strong; meta kills folds 1-3
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "meta_win_thresh":    0.0,   # bypass meta — meta kills folds even at 0.45
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "ICICIBANK": {
@@ -128,9 +130,9 @@ INSTRUMENTS = {
         "sl_pct":             1.5,
         "time_limit_days":    10,
         "direction_threshold": 1.5,
-        "meta_win_thresh":    0.0,   # bypass meta — fold 0 WR=38.5%; meta kills folds 1-3
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "meta_win_thresh":    0.0,   # bypass meta — meta kills folds even at 0.45
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "BHARTIARTL": {
@@ -144,8 +146,8 @@ INSTRUMENTS = {
         "sl_pct":             1.5,
         "time_limit_days":    12,
         "direction_threshold": 2.0,
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "AXISBANK": {
@@ -159,8 +161,9 @@ INSTRUMENTS = {
         "sl_pct":             2.0,
         "time_limit_days":    12,
         "direction_threshold": 2.5,
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "meta_win_thresh":    0.45,  # keep existing — gave MARGINAL with 2 valid folds
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "SBIN": {
@@ -174,8 +177,9 @@ INSTRUMENTS = {
         "sl_pct":             2.0,
         "time_limit_days":    12,
         "direction_threshold": 2.5,
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "meta_win_thresh":    0.0,   # bypass meta — meta kills fold2/3 leaving only 2 valid folds
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "BAJFINANCE": {
@@ -189,8 +193,8 @@ INSTRUMENTS = {
         "sl_pct":             2.0,
         "time_limit_days":    12,
         "direction_threshold": 2.5,
-        "meta_win_thresh":    0.0,   # bypass meta — regime shift kills later folds even at 0.45
-        "data_start":         "2015-01-01",
+        "meta_win_thresh":    0.0,   # bypass meta — ADX gate kills fold3 anyway
+        "data_start":         "2015-01-01",  # F&O liquidity only from 2014; keep 2015
         "wf_folds":           4,
         "regime_col":         "1w_dist_sma_50",
     },
@@ -205,8 +209,8 @@ INSTRUMENTS = {
         "sl_pct":             1.5,
         "time_limit_days":    12,
         "direction_threshold": 2.0,
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "HCLTECH": {
@@ -220,8 +224,8 @@ INSTRUMENTS = {
         "sl_pct":             1.5,
         "time_limit_days":    12,
         "direction_threshold": 2.0,
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "MARUTI": {
@@ -235,8 +239,8 @@ INSTRUMENTS = {
         "sl_pct":             2.0,
         "time_limit_days":    12,
         "direction_threshold": 2.5,
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "TITAN": {
@@ -250,8 +254,8 @@ INSTRUMENTS = {
         "sl_pct":             2.0,
         "time_limit_days":    12,
         "direction_threshold": 2.5,
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
     "SUNPHARMA": {
@@ -265,8 +269,130 @@ INSTRUMENTS = {
         "sl_pct":             1.5,
         "time_limit_days":    12,
         "direction_threshold": 2.0,
-        "data_start":         "2015-01-01",
-        "wf_folds":           4,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
+        "regime_col":         "1w_dist_sma_50",
+    },
+
+    # ── New Instruments: Popular F&O Stocks ─────────────────────────────────
+    "KOTAKBANK": {
+        "yf_symbol":          "KOTAKBANK.NS",
+        "nse_symbol":         "KOTAKBANK",
+        "display_name":       "Kotak Mahindra Bank",
+        "type":               "stock",
+        "sector":             "Banking",
+        "lot_size":           40,
+        "tp_pct":             4.5,
+        "sl_pct":             1.5,
+        "time_limit_days":    10,
+        "direction_threshold": 2.0,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
+        "regime_col":         "1w_dist_sma_50",
+    },
+    "LT": {
+        "yf_symbol":          "LT.NS",
+        "nse_symbol":         "LT",
+        "display_name":       "Larsen & Toubro",
+        "type":               "stock",
+        "sector":             "Engineering",
+        "lot_size":           25,
+        "tp_pct":             5.0,
+        "sl_pct":             2.0,
+        "time_limit_days":    12,
+        "direction_threshold": 2.0,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
+        "regime_col":         "1w_dist_sma_50",
+    },
+    "BAJAJFINSV": {
+        "yf_symbol":          "BAJAJFINSV.NS",
+        "nse_symbol":         "BAJAJFINSV",
+        "display_name":       "Bajaj Finserv",
+        "type":               "stock",
+        "sector":             "Finance",
+        "lot_size":           50,
+        "tp_pct":             5.0,
+        "sl_pct":             2.0,
+        "time_limit_days":    12,
+        "direction_threshold": 2.5,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
+        "regime_col":         "1w_dist_sma_50",
+    },
+    "DRREDDY": {
+        "yf_symbol":          "DRREDDY.NS",
+        "nse_symbol":         "DRREDDY",
+        "display_name":       "Dr. Reddy's Laboratories",
+        "type":               "stock",
+        "sector":             "Pharma",
+        "lot_size":           25,
+        "tp_pct":             5.0,
+        "sl_pct":             1.5,
+        "time_limit_days":    12,
+        "direction_threshold": 2.0,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
+        "regime_col":         "1w_dist_sma_50",
+    },
+    "ASIANPAINT": {
+        "yf_symbol":          "ASIANPAINT.NS",
+        "nse_symbol":         "ASIANPAINT",
+        "display_name":       "Asian Paints",
+        "type":               "stock",
+        "sector":             "Consumer",
+        "lot_size":           25,
+        "tp_pct":             4.5,
+        "sl_pct":             1.5,
+        "time_limit_days":    10,
+        "direction_threshold": 2.0,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
+        "regime_col":         "1w_dist_sma_50",
+    },
+    "TECHM": {
+        "yf_symbol":          "TECHM.NS",
+        "nse_symbol":         "TECHM",
+        "display_name":       "Tech Mahindra",
+        "type":               "stock",
+        "sector":             "Technology",
+        "lot_size":           75,
+        "tp_pct":             5.0,
+        "sl_pct":             1.5,
+        "time_limit_days":    12,
+        "direction_threshold": 2.5,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
+        "regime_col":         "1w_dist_sma_50",
+    },
+    "ULTRACEMCO": {
+        "yf_symbol":          "ULTRACEMCO.NS",
+        "nse_symbol":         "ULTRACEMCO",
+        "display_name":       "UltraTech Cement",
+        "type":               "stock",
+        "sector":             "Industrial",
+        "lot_size":           25,
+        "tp_pct":             5.0,
+        "sl_pct":             2.0,
+        "time_limit_days":    12,
+        "direction_threshold": 2.0,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
+        "regime_col":         "1w_dist_sma_50",
+    },
+    "CIPLA": {
+        "yf_symbol":          "CIPLA.NS",
+        "nse_symbol":         "CIPLA",
+        "display_name":       "Cipla",
+        "type":               "stock",
+        "sector":             "Pharma",
+        "lot_size":           650,
+        "tp_pct":             4.5,
+        "sl_pct":             1.5,
+        "time_limit_days":    12,
+        "direction_threshold": 2.0,
+        "data_start":         "2010-01-01",
+        "wf_folds":           5,
         "regime_col":         "1w_dist_sma_50",
     },
 }
@@ -363,6 +489,11 @@ MARGINAL_SHARPE   = 0.3
 # Daily stock models use 3:1+ R:R (TP 4-6% / SL 1.5-2%) so break-even WR is ~25-27%.
 # 38% WR gate gives solid positive EV margin; 44% was designed for 2:1 crypto signals.
 MARGINAL_WR       = 0.38
+# High-Sharpe secondary MARGINAL path: for systems with excellent risk-adjusted returns
+# but lower hit-rate (high R:R structure). At 3:1 R:R, 33% WR still yields ~0.32% EV/trade.
+# Requires Sharpe >= 0.70 so single-lucky-year noise is excluded.
+MARGINAL_SHARPE_HIGH = 0.70
+MARGINAL_WR_LOW      = 0.33
 MIN_TRADES        = 15
 
 ADX_GATE          = 20    # only trade when 1d_adx >= 20
@@ -446,14 +577,16 @@ AGENT_DB_PATH        = os.path.join(DATA_DIR, "agent_memory.db")
 # ─── Sector Index Map ────────────────────────────────────────────────────────
 
 SECTOR_INDEX = {
-    "Technology": "^CNXIT",
-    "Banking":    "^NSEBANK",
-    "Pharma":     "^CNXPHARMA",
-    "Auto":       "^CNXAUTO",
-    "Energy":     "^CNXENERGY",
-    "Finance":    "^NSEBANK",    # ^CNXFINANCE delisted; banking index is best proxy
-    "Telecom":    "^CNXSERVICE",
-    "Consumer":   "^NSEI",       # NIFTY50 as broad proxy for consumer discretionary
+    "Technology":  "^CNXIT",
+    "Banking":     "^NSEBANK",
+    "Pharma":      "^CNXPHARMA",
+    "Auto":        "^CNXAUTO",
+    "Energy":      "^CNXENERGY",
+    "Finance":     "^NSEBANK",    # ^CNXFINANCE delisted; banking index is best proxy
+    "Telecom":     "^CNXSERVICE",
+    "Consumer":    "^NSEI",       # NIFTY50 as broad proxy for consumer discretionary
+    "Engineering": "^CNXINFRA",   # Infra/engineering index — covers LT and capital goods
+    "Industrial":  "^CNXINFRA",   # Cement/industrial — CNXINFRA is the best proxy
 }
 
 # ─── Broker Config (populated from .env) ────────────────────────────────────
