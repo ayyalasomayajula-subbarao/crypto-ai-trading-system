@@ -43,7 +43,7 @@ _WF_SIZE_MULTIPLIERS: dict[str, float] = {
     # ── Indices ──────────────────────────────────────────────────────────────
     "NIFTY50":    0.5,   # VIABLE   — 3 valid folds, WR=48.9%, Sharpe=1.744, spread=0.00
     "BANKNIFTY":  0.5,   # VIABLE   — 3 valid folds, WR=57.5%, Sharpe=3.341, spread=0.15
-    "NIFTYIT":    0.5,   # MARGINAL — 4 valid folds, WR=39.9%, Sharpe=1.118, spread=0.00
+    "NIFTYIT":    0.5,   # MARGINAL — 4 valid folds, WR=39.9%, Sharpe=1.118, spread=0.05
     # ── Stocks: 5 valid folds (0.7x) ─────────────────────────────────────────
     "DRREDDY":    0.7,   # MARGINAL — 5 valid folds, WR=33.1%, Sharpe=1.171, spread=0.10
     "HCLTECH":    0.7,   # MARGINAL — 5 valid folds, WR=35.7%, Sharpe=1.387, spread=0.05
@@ -52,7 +52,7 @@ _WF_SIZE_MULTIPLIERS: dict[str, float] = {
     "HDFCBANK":   0.7,   # MARGINAL — 5 valid folds, WR=39.6%, Sharpe=0.952, spread=0.00
     "LT":         0.7,   # MARGINAL — 5 valid folds, WR=38.7%, Sharpe=1.015, spread=0.10
     "ASIANPAINT": 0.7,   # MARGINAL — 5 valid folds, WR=33.7%, Sharpe=0.910, spread=0.10
-    "TCS":        0.7,   # MARGINAL — 5 valid folds, WR=33.1%, Sharpe=0.733, spread=0.00
+    "TCS":        0.7,   # MARGINAL — 5 valid folds, WR=33.1%, Sharpe=0.733, spread=0.10
     "TITAN":      0.7,   # MARGINAL — 5 valid folds, WR=33.4%, Sharpe=0.728, spread=0.00
     # ── Stocks: 3-4 valid folds (0.5x) ───────────────────────────────────────
     "INFY":       0.5,   # MARGINAL — 4 valid folds, WR=35.9%, Sharpe=1.315, spread=0.15
