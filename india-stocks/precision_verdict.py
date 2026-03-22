@@ -152,8 +152,14 @@ def _get_current_price(symbol: str) -> float:
 
 # ─── Individual signal scorers ────────────────────────────────────────────────
 
-def _score_ml_model(probas: np.ndarray, classes: list, threshold: float) -> dict:
-    """Score ML model output. Returns signal in [-1, +1] range."""
+def _score_ml_model(probas: np.ndarray, classes: list,
+                    threshold: float, confidence_spread: float = 0.0) -> dict:
+    """Score ML model output. Returns signal in [-1, +1] range.
+
+    confidence_spread: require P(direction) - P(opposite) >= spread.
+    Filters weak directional signals where the model is uncertain.
+    0.0 = disabled (current behaviour).
+    """
     up_idx   = classes.index("UP")   if "UP"   in classes else 2
     down_idx = classes.index("DOWN") if "DOWN" in classes else 0
 
@@ -161,9 +167,14 @@ def _score_ml_model(probas: np.ndarray, classes: list, threshold: float) -> dict
     p_down = float(probas[down_idx])
 
     if p_up > p_down and p_up >= threshold:
+        # Apply confidence spread filter
+        if confidence_spread > 0.0 and (p_up - p_down) < confidence_spread:
+            return {"score": 0, "direction": "NEUTRAL", "p_up": p_up, "p_down": p_down}
         score = (p_up - 0.33) / 0.67  # normalize to [0,1]
         direction = "LONG"
     elif p_down > p_up and p_down >= threshold:
+        if confidence_spread > 0.0 and (p_down - p_up) < confidence_spread:
+            return {"score": 0, "direction": "NEUTRAL", "p_up": p_up, "p_down": p_down}
         score = -(p_down - 0.33) / 0.67
         direction = "SHORT"
     else:
@@ -402,15 +413,18 @@ class VerdictEngine:
                 le = LabelEncoder()
                 le.classes_ = np.array(classes if isinstance(classes[0], str) else
                                         ["DOWN", "SIDEWAYS", "UP"])
-                from config import WF_THRESHOLD_GRID
-                # Load WF threshold from results
+                # Load WF threshold + confidence spread from results
                 threshold = 0.50
+                confidence_spread = 0.0
                 results_path = os.path.join(MODELS_DIR, symbol, "wf_results.json")
                 if os.path.exists(results_path):
                     with open(results_path) as f:
                         wf = json.load(f)
                     threshold = wf.get("best_threshold", 0.50) or 0.50
-                ml_result = _score_ml_model(probas, le.classes_.tolist(), threshold)
+                    confidence_spread = wf.get("best_spread", 0.0) or 0.0
+                ml_result = _score_ml_model(
+                    probas, le.classes_.tolist(), threshold, confidence_spread
+                )
             except Exception as e:
                 log.warning(f"{symbol} ML score failed: {e}")
 

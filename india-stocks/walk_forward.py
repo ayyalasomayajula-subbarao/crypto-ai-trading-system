@@ -44,7 +44,8 @@ from config import (
     INSTRUMENTS, ALL_SYMBOLS, MODELS_DIR,
     features_path, model_path, features_list_path,
     LGBM_PARAMS, META_LGBM_PARAMS, WF_FAST_LGBM_PARAMS,
-    WF_THRESHOLD_GRID, META_LABELING, META_WIN_THRESH, META_TRAIN_FRAC,
+    WF_THRESHOLD_GRID, CONFIDENCE_SPREAD_GRID,
+    META_LABELING, META_WIN_THRESH, META_TRAIN_FRAC,
     VIABLE_SHARPE, VIABLE_WR, MARGINAL_SHARPE, MARGINAL_WR,
     MARGINAL_SHARPE_HIGH, MARGINAL_WR_LOW, MIN_TRADES,
     ADX_GATE,
@@ -130,7 +131,8 @@ def _regime_ok(row: pd.Series, cfg: dict) -> bool:
 
 def _backtest_fold(model, meta_model, X_test: pd.DataFrame,
                    y_test: pd.Series, cfg: dict,
-                   threshold: float, le) -> pd.DataFrame:
+                   threshold: float, le,
+                   confidence_spread: float = 0.0) -> pd.DataFrame:
     """
     Simulate trades on test fold.
     Returns DataFrame of individual trades with P&L.
@@ -185,6 +187,14 @@ def _backtest_fold(model, meta_model, X_test: pd.DataFrame,
             signal_strength = p_down
         else:
             continue
+
+        # Confidence spread filter: require clear directional conviction.
+        # Removes signals where model is weakly directional (p_up ≈ p_down).
+        if confidence_spread > 0.0:
+            if direction == "LONG"  and (p_up   - p_down) < confidence_spread:
+                continue
+            if direction == "SHORT" and (p_down  - p_up)  < confidence_spread:
+                continue
 
         # Find entry price on 1D data
         entry_rows = df_1d[df_1d.index >= ts]
@@ -352,12 +362,15 @@ def run_wf(symbol: str) -> dict:
     log.info(f"{symbol}: {len(folds)} folds")
 
     best_threshold = None
+    best_spread    = 0.0
     best_sharpe    = -99
     fold_results   = []
     last_model     = None
 
     for threshold in WF_THRESHOLD_GRID:
-        fold_metrics = []
+        # Train all fold models once for this threshold, then evaluate all spreads.
+        # Spread is a post-model filter — no extra training cost.
+        fold_models = []   # list of (model, meta_model, X_te, y_te, fold_id)
 
         for fold in folds:
             train_mask = X.index <= _ts(fold["train_end"])
@@ -375,48 +388,51 @@ def run_wf(symbol: str) -> dict:
             model = CalibratedClassifierCV(lgbm, method="isotonic", cv=_WF_CV)
             model.fit(X_tr, y_tr)
 
-            # Meta model
+            # Meta model (trained at this threshold — meta labels depend on which
+            # trades fire, so it stays threshold-specific)
             meta_model = None
             if META_LABELING:
-                # Use last META_TRAIN_FRAC of training window for meta
                 meta_start = X_tr.index[int(len(X_tr) * (1 - META_TRAIN_FRAC))]
                 X_meta = X_tr[X_tr.index >= meta_start]
                 y_meta = y_tr[y_tr.index >= meta_start]
-                # Run a quick backtest on meta window to get trade labels
                 fold_trades = _backtest_fold(
                     model, None, X_meta, y_meta, cfg, threshold, le
                 )
                 meta_model = _train_meta(X_meta, y_meta, fold_trades)
 
-            trades = _backtest_fold(model, meta_model, X_te, y_te,
-                                     cfg, threshold, le)
-            metrics = _compute_metrics(trades)
-            metrics["fold"] = fold["fold"]
-            fold_metrics.append(metrics)
-
-            # Keep model from last fold
+            fold_models.append((model, meta_model, X_te, y_te, fold["fold"]))
             last_model = model
 
-            log.info(
-                f"  {symbol} fold={fold['fold']} thresh={threshold:.2f} "
-                f"Sharpe={metrics['sharpe']:.3f} WR={metrics['wr']:.1%} "
-                f"Trades={metrics['n_trades']}"
-            )
-
-        if not fold_metrics:
+        if not fold_models:
             continue
 
-        # Use only valid folds (>= MIN_TRADES) for threshold selection.
-        # Require ≥2 valid folds so the threshold selector and _viability() agree —
-        # a single-fold threshold will always be NOT_VIABLE and should not be preferred.
-        valid_metrics = [m for m in fold_metrics if m["n_trades"] >= MIN_TRADES]
-        if len(valid_metrics) < 2:
-            continue
-        avg_sharpe = np.mean([m["sharpe"] for m in valid_metrics])
-        if avg_sharpe > best_sharpe:
-            best_sharpe    = avg_sharpe
-            best_threshold = threshold
-            fold_results   = fold_metrics
+        # Evaluate all spread values using the same trained models — no retraining.
+        for spread in CONFIDENCE_SPREAD_GRID:
+            fold_metrics = []
+            for model, meta_model, X_te, y_te, fold_id in fold_models:
+                trades = _backtest_fold(model, meta_model, X_te, y_te,
+                                        cfg, threshold, le, confidence_spread=spread)
+                metrics = _compute_metrics(trades)
+                metrics["fold"] = fold_id
+                fold_metrics.append(metrics)
+
+                log.info(
+                    f"  {symbol} fold={fold_id} thresh={threshold:.2f} "
+                    f"spread={spread:.2f} "
+                    f"Sharpe={metrics['sharpe']:.3f} WR={metrics['wr']:.1%} "
+                    f"Trades={metrics['n_trades']}"
+                )
+
+            # Require ≥2 valid folds for selection (same rule as _viability)
+            valid_metrics = [m for m in fold_metrics if m["n_trades"] >= MIN_TRADES]
+            if len(valid_metrics) < 2:
+                continue
+            avg_sharpe = np.mean([m["sharpe"] for m in valid_metrics])
+            if avg_sharpe > best_sharpe:
+                best_sharpe    = avg_sharpe
+                best_threshold = threshold
+                best_spread    = spread
+                fold_results   = fold_metrics
 
     # Determine viability (valid folds only)
     valid_results = [m for m in fold_results if m["n_trades"] >= MIN_TRADES] if fold_results else []
@@ -426,7 +442,7 @@ def run_wf(symbol: str) -> dict:
 
     log.info(
         f"\n{'='*60}\n{symbol} RESULT: {verdict}\n"
-        f"Best threshold: {best_threshold}\n"
+        f"Best threshold: {best_threshold}  Best spread: {best_spread}\n"
         f"Avg Sharpe: {best_sharpe:.3f}  Avg WR: {avg_wr:.1%}\n"
         f"Total trades: {total_trades}\n{'='*60}"
     )
@@ -448,6 +464,7 @@ def run_wf(symbol: str) -> dict:
         "symbol":          symbol,
         "verdict":         verdict,
         "best_threshold":  best_threshold,
+        "best_spread":     best_spread,
         "avg_sharpe":      round(best_sharpe, 3),
         "avg_wr":          round(avg_wr, 3),
         "total_trades":    total_trades,

@@ -483,6 +483,12 @@ WF_FAST_LGBM_PARAMS = {
 WF_THRESHOLD_GRID = [0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45,
                      0.50, 0.55, 0.60, 0.65, 0.70]
 
+# Confidence spread filter: require P(direction) - P(opposite) >= spread.
+# Removes weak signals where the model is directional but uncertain.
+# 0.0 = disabled (current behaviour), 0.05-0.15 = progressively stricter.
+# No extra training cost — applied as post-model filter in backtest only.
+CONFIDENCE_SPREAD_GRID = [0.0, 0.05, 0.10, 0.15]
+
 VIABLE_SHARPE     = 0.8
 VIABLE_WR         = 0.48
 MARGINAL_SHARPE   = 0.3
