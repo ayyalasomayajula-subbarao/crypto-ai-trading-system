@@ -6,23 +6,37 @@ import {
 } from '@mui/material';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
+import RadarIcon from '@mui/icons-material/Radar';
+import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 
 const STOCKS_API = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
+const EVENT_COLORS: Record<string, string> = {
+  SCAN_START: '#546e7a',
+  SIGNAL:     '#29b6f6',
+  ENTRY:      '#66bb6a',
+  SKIP:       '#78909c',
+  EXIT:       '#ffa726',
+  ERROR:      '#ef5350',
+};
+
 const StocksPortfolio: React.FC = () => {
-  const [status, setStatus]   = useState<any>(null);
-  const [trades, setTrades]   = useState<any>({ open: [], closed: [] });
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState('');
+  const [status, setStatus]     = useState<any>(null);
+  const [trades, setTrades]     = useState<any>({ open: [], closed: [] });
+  const [activity, setActivity] = useState<any>(null);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState('');
 
   const refresh = async () => {
     try {
-      const [sRes, tRes] = await Promise.all([
+      const [sRes, tRes, aRes] = await Promise.all([
         fetch(`${STOCKS_API}/stocks/paper-trading/status`),
         fetch(`${STOCKS_API}/stocks/paper-trading/trades`),
+        fetch(`${STOCKS_API}/stocks/paper-trading/activity?limit=30`),
       ]);
       setStatus(await sRes.json());
       setTrades(await tRes.json());
+      setActivity(await aRes.json());
     } catch (e: any) {
       setError('Cannot connect to stocks API');
     } finally {
@@ -49,27 +63,38 @@ const StocksPortfolio: React.FC = () => {
   if (error) return <Box p={3}><Alert severity="warning">{error}</Alert></Box>;
 
   const m = status?.metrics || {};
+  const isRunning = status?.running ?? false;
+  const marketOpen = status?.market_open ?? false;
 
   return (
     <Box p={3} maxWidth={1400}>
+      {/* ── Header ── */}
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Box>
           <Typography variant="h4" fontWeight={700}>Stocks Portfolio</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Paper trading · NSE instruments
+          <Box display="flex" alignItems="center" gap={1} mt={0.5}>
+            <FiberManualRecordIcon
+              sx={{ fontSize: 10, color: isRunning ? '#66bb6a' : '#546e7a',
+                    animation: isRunning && marketOpen ? 'pulse 1.5s infinite' : 'none',
+                    '@keyframes pulse': { '0%,100%': { opacity: 1 }, '50%': { opacity: 0.3 } } }} />
+            <Typography variant="body2" color="text.secondary">
+              {isRunning ? 'Paper trading active' : 'Paper trading stopped'}
+            </Typography>
             <Chip size="small"
-              label={status?.market_open ? 'Market Open' : 'Market Closed'}
-              color={status?.market_open ? 'success' : 'default'}
-              sx={{ ml: 1 }} />
-          </Typography>
+              label={marketOpen ? 'Market Open' : 'Market Closed'}
+              color={marketOpen ? 'success' : 'default'} />
+            {isRunning && !marketOpen && (
+              <Chip size="small" label="Scans at 09:15 IST" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+            )}
+          </Box>
         </Box>
         <Box display="flex" gap={1}>
           <Button size="small" variant="outlined"
-            onClick={() => fetch(`${STOCKS_API}/stocks/paper-trading/start`, { method: 'POST' })}>
+            onClick={() => { fetch(`${STOCKS_API}/stocks/paper-trading/start`, { method: 'POST' }); refresh(); }}>
             Start
           </Button>
           <Button size="small" variant="outlined" color="warning"
-            onClick={() => fetch(`${STOCKS_API}/stocks/paper-trading/stop`, { method: 'POST' })}>
+            onClick={() => { fetch(`${STOCKS_API}/stocks/paper-trading/stop`, { method: 'POST' }); refresh(); }}>
             Stop
           </Button>
           <Button size="small" variant="outlined" color="error"
@@ -91,7 +116,7 @@ const StocksPortfolio: React.FC = () => {
           { label: 'Win Rate', val: `${((m.win_rate || 0) * 100).toFixed(1)}%`, sub: `${m.total_trades || 0} trades`, color: '#90caf9' },
           { label: 'Sharpe', val: (m.sharpe || 0).toFixed(3), sub: 'annualised', color: m.sharpe > 0 ? '#69f0ae' : '#ff5252' },
           { label: 'Profit Factor', val: (m.profit_factor || 0).toFixed(2), sub: 'wins/losses', color: '#ce93d8' },
-          { label: 'Open Positions', val: m.open_positions || 0, sub: 'active trades', color: '#ffd54f' },
+          { label: 'Open Positions', val: m.open_positions || 0, sub: `of ${5} max`, color: '#ffd54f' },
           { label: 'Daily P&L', val: `₹${(m.daily_pnl || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, sub: 'today', color: (m.daily_pnl || 0) >= 0 ? '#69f0ae' : '#ff5252' },
         ].map(({ label, val, sub, color }) => (
           <Grid item xs={6} sm={4} md={2} key={label}>
@@ -158,6 +183,52 @@ const StocksPortfolio: React.FC = () => {
           </Table>
         </Box>
       )}
+
+      {/* ── Scanner Activity Log ── */}
+      <Box display="flex" alignItems="center" gap={1} mb={1}>
+        <RadarIcon sx={{ fontSize: 18, color: '#90caf9' }} />
+        <Typography variant="h6" fontWeight={600}>Scanner Activity</Typography>
+        <Typography variant="caption" color="text.secondary">
+          — auto-scans every 15 min · {activity?.next_scan || ''}
+        </Typography>
+      </Box>
+      <Card sx={{ bgcolor: 'rgba(255,255,255,0.02)', borderRadius: 2, mb: 3, maxHeight: 280, overflow: 'auto' }}>
+        {!activity?.events?.length ? (
+          <Box p={2}>
+            <Typography color="text.secondary" fontSize="0.85rem">
+              No scanner activity yet. Scanner runs automatically every 15 minutes during market hours (09:15–15:30 IST).
+            </Typography>
+          </Box>
+        ) : (
+          <Box sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>
+            {activity.events.map((e: any, i: number) => (
+              <Box key={i} display="flex" alignItems="flex-start" gap={1.5} px={2} py={0.6}
+                sx={{ borderBottom: '1px solid rgba(255,255,255,0.04)',
+                      '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' } }}>
+                <Typography sx={{ color: '#546e7a', minWidth: 60, fontSize: '0.75rem', pt: '1px' }}>
+                  {e.ts}
+                </Typography>
+                <Chip size="small" label={e.event}
+                  sx={{ fontSize: '0.65rem', height: 18, minWidth: 72,
+                        bgcolor: EVENT_COLORS[e.event] || '#546e7a', color: '#fff' }} />
+                {e.symbol && (
+                  <Typography sx={{ fontWeight: 700, minWidth: 90, color: '#e0e0e0' }}>
+                    {e.symbol}
+                  </Typography>
+                )}
+                {e.verdict && (
+                  <Chip size="small" label={e.verdict}
+                    sx={{ fontSize: '0.65rem', height: 18,
+                          color: e.verdict.includes('BUY') ? '#66bb6a' : e.verdict.includes('SELL') ? '#ef5350' : '#ffd54f' }} />
+                )}
+                <Typography sx={{ color: '#90a4ae', flex: 1 }}>{e.detail}</Typography>
+              </Box>
+            ))}
+          </Box>
+        )}
+      </Card>
+
+      <Divider sx={{ mb: 3 }} />
 
       {/* ── Closed Trades ── */}
       <Typography variant="h6" fontWeight={600} gutterBottom>

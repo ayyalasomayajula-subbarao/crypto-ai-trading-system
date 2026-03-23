@@ -73,6 +73,24 @@ class ConnectionManager:
 
 ws_manager = ConnectionManager()
 
+# ─── Paper trading activity log ───────────────────────────────────────────────
+# Ring buffer of last 100 scanner events (signal checks, entries, exits, skips)
+_pt_activity: list[dict] = []
+_PT_MAX_EVENTS = 100
+
+def _pt_log(event: str, symbol: str = "", detail: str = "", verdict: str = ""):
+    """Append a paper trading scanner event to the activity log."""
+    _pt_activity.append({
+        "ts":      datetime.now(IST).strftime("%H:%M:%S"),
+        "date":    datetime.now(IST).strftime("%Y-%m-%d"),
+        "event":   event,   # SCAN_START | SIGNAL | ENTRY | SKIP | EXIT | ERROR
+        "symbol":  symbol,
+        "verdict": verdict,
+        "detail":  detail,
+    })
+    if len(_pt_activity) > _PT_MAX_EVENTS:
+        _pt_activity.pop(0)
+
 # ─── API-level response cache ─────────────────────────────────────────────────
 
 _api_cache: dict = {}
@@ -120,10 +138,75 @@ async def _warm_caches():
         log.warning(f"Prices warm-up failed: {e}")
 
 
+def _paper_scanner_tick():
+    """
+    One scanner tick: scan all symbols, enter positions for strong signals.
+    Runs in a thread executor (blocking). Called every 15 min during market hours.
+    """
+    if not paper._state.get("running", False):
+        return
+    if not is_market_open():
+        return
+
+    _pt_log("SCAN_START", detail=f"Scanning {len(ACTIVE_SYMBOLS)} symbols")
+    log.info("[PaperScanner] Scanning all symbols...")
+
+    try:
+        signals = verdict.scan_all()
+    except Exception as e:
+        _pt_log("ERROR", detail=f"scan_all failed: {e}")
+        log.warning(f"[PaperScanner] scan_all error: {e}")
+        return
+
+    actionable = [
+        s for s in signals
+        if s.get("verdict") in ("STRONG_BUY", "BUY", "LEAN_BUY",
+                                "STRONG_SELL", "SELL", "LEAN_SELL")
+        and s.get("score", 0) >= 55   # slightly above MIN_CONFIDENCE for auto-entry
+    ]
+
+    _pt_log("SCAN_START", detail=f"Found {len(actionable)} actionable signals out of {len(signals)}")
+
+    for sig in actionable:
+        sym = sig["symbol"]
+        v   = sig.get("verdict", "")
+        score = sig.get("score", 0)
+
+        # Skip already open
+        if any(p["symbol"] == sym for p in paper._state.get("open_positions", [])):
+            _pt_log("SKIP", sym, f"Already in position", v)
+            continue
+
+        result = paper.open_position(sym, sig)
+        if result.get("ok"):
+            _pt_log("ENTRY", sym,
+                    f"score={score} entry={sig.get('entry_price',0):.2f} "
+                    f"tp={result.get('target_price',0):.2f} sl={result.get('sl_price',0):.2f}", v)
+            log.info(f"[PaperScanner] ENTERED {sym} {v} score={score}")
+        else:
+            reason = result.get("reason", "unknown")
+            _pt_log("SKIP", sym, reason, v)
+            log.info(f"[PaperScanner] SKIP {sym}: {reason}")
+
+
+async def _paper_scanner_loop():
+    """Background loop: run scanner every 15 minutes during market hours."""
+    await asyncio.sleep(5)   # wait for startup
+    loop = asyncio.get_event_loop()
+    while True:
+        if is_market_open():
+            try:
+                await loop.run_in_executor(None, _paper_scanner_tick)
+            except Exception as e:
+                log.warning(f"[PaperScanner] tick error: {e}")
+        await asyncio.sleep(15 * 60)   # 15-minute interval
+
+
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(price_broadcast_loop())
     asyncio.create_task(_warm_caches())
+    asyncio.create_task(_paper_scanner_loop())
     log.info("India Stocks API started on port 8001")
 
 
@@ -559,6 +642,19 @@ def paper_stop():
 def paper_reset():
     paper.reset()
     return {"ok": True, "message": "Paper trading reset"}
+
+
+@app.get("/stocks/paper-trading/activity")
+def paper_activity(limit: int = 50):
+    """Return recent paper trading scanner activity log."""
+    events = _pt_activity[-limit:][::-1]  # newest first
+    return {
+        "events": events,
+        "total":  len(_pt_activity),
+        "market_open": is_market_open(),
+        "running": paper._state.get("running", False),
+        "next_scan": "Every 15 minutes during market hours (09:15–15:30 IST)",
+    }
 
 
 # ─── Live trading ─────────────────────────────────────────────────────────────
