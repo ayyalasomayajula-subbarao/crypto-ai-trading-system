@@ -181,6 +181,10 @@ def _paper_scanner_tick():
             _pt_log("SKIP", sym, f"Already in position", v)
             continue
 
+        # Use Angel One LTP as entry price if available
+        ltp = broker.get_ltp(sym)
+        if ltp > 0:
+            sig["entry_price"] = ltp
         result = paper.open_position(sym, sig)
         if result.get("ok"):
             _pt_log("ENTRY", sym,
@@ -216,9 +220,51 @@ async def startup():
 
 # ─── Price helpers ────────────────────────────────────────────────────────────
 
+def _fetch_angel_one_prices() -> dict:
+    """
+    Fetch real-time LTP for all symbols via Angel One SmartAPI (zero delay).
+    Returns same format as _fetch_intraday_prices(). Falls back silently on error.
+    """
+    import pandas as pd
+    from config import ohlcv_path
+
+    result = {}
+    try:
+        for sym in ACTIVE_SYMBOLS:
+            ltp = broker.get_ltp(sym)
+            if ltp <= 0:
+                continue
+            prev_close = 0.0
+            path_1d = ohlcv_path(sym, "1d")
+            if os.path.exists(path_1d):
+                hist = pd.read_csv(path_1d, index_col=0, parse_dates=True)
+                if not hist.empty:
+                    prev_close = float(hist["close"].iloc[-1])
+            change_pct = ((ltp - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
+            result[sym] = {
+                "symbol":       sym,
+                "price":        round(ltp, 2),
+                "open":         round(prev_close, 2),   # day open not in LTP endpoint
+                "high":         round(ltp, 2),
+                "low":          round(ltp, 2),
+                "prev_close":   round(prev_close, 2),
+                "volume":       0,
+                "change_pct":   round(change_pct, 2),
+                "timestamp":    datetime.now(IST).isoformat(),
+                "display_name": INSTRUMENTS[sym].get("display_name", sym),
+                "sector":       INSTRUMENTS[sym].get("sector", ""),
+                "type":         INSTRUMENTS[sym].get("type", ""),
+                "live":         True,
+                "source":       "angel_one",
+            }
+    except Exception as e:
+        log.warning(f"Angel One price fetch failed: {e}")
+    return result
+
+
 def _fetch_intraday_prices() -> dict:
     """
-    During market hours: fetch live intraday prices via yfinance 1m (~15 min delay).
+    Fallback: fetch intraday prices via yfinance 1m (~15 min delay).
     Returns dict keyed by symbol with current price, open, high, low, change_pct vs prev close.
     """
     import yfinance as yf
@@ -304,14 +350,19 @@ async def _get_live_prices() -> dict:
 
     prices = {}
 
-    # During market hours — fetch live intraday
+    # During market hours — Angel One LTP first (real-time), yfinance fallback (~15 min delay)
     if market_open:
         try:
             prices = await asyncio.get_event_loop().run_in_executor(
-                None, _fetch_intraday_prices
+                None, _fetch_angel_one_prices
             )
+            if len(prices) < 5:   # Angel One failed or partial — fall back to yfinance
+                log.warning("Angel One returned few prices, falling back to yfinance")
+                prices = await asyncio.get_event_loop().run_in_executor(
+                    None, _fetch_intraday_prices
+                )
         except Exception as e:
-            log.warning(f"Intraday fetch error: {e}")
+            log.warning(f"Live price fetch error: {e}")
 
     # Fill any missing symbols (or all symbols outside market hours) from 1D CSV
     for sym in ACTIVE_SYMBOLS:
@@ -712,6 +763,11 @@ class TradeRequest(BaseModel):
 def paper_open(req: TradeRequest):
     sym = req.symbol.upper()
     v = verdict.get_verdict(sym, force=req.force)
+    # Override entry_price with real-time Angel One LTP if available
+    ltp = broker.get_ltp(sym)
+    if ltp > 0:
+        v["entry_price"] = ltp
+        log.info(f"[PaperOpen] {sym} entry_price overridden to Angel One LTP={ltp}")
     return paper.open_position(sym, v)
 
 

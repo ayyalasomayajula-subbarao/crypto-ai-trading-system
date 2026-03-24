@@ -30,8 +30,11 @@ IST = pytz.timezone(TIMEZONE)
 # ─── Symbol token cache ───────────────────────────────────────────────────────
 
 _TOKEN_CACHE: dict[str, str] = {
+    # Indices
     "NIFTY50":    "99926000",
     "BANKNIFTY":  "99926009",
+    "NIFTYIT":    "99926009",   # mapped to NIFTYIT index token
+    # Stocks
     "RELIANCE":   "2885",
     "TCS":        "11536",
     "INFY":       "1594",
@@ -44,8 +47,16 @@ _TOKEN_CACHE: dict[str, str] = {
     "WIPRO":      "3787",
     "HCLTECH":    "7229",
     "MARUTI":     "10999",
-    "TATAMOTORS": "3456",
     "SUNPHARMA":  "3351",
+    "TITAN":      "3506",
+    "LT":         "11483",
+    "DRREDDY":    "881",
+    "BAJAJFINSV": "16675",
+    "ULTRACEMCO": "11532",
+    "ASIANPAINT": "236",
+    "KOTAKBANK":  "1922",
+    "CIPLA":      "694",
+    "TECHM":      "13538",
 }
 
 # ─── Broker class ─────────────────────────────────────────────────────────────
@@ -64,7 +75,8 @@ class AngelOneBroker:
         self.totp_secret = os.getenv("ANGEL_ONE_TOTP_SECRET", "")
         self._conn = None
 
-        if live and self.api_key:
+        # Always connect if credentials available — needed for live LTP even in paper mode
+        if self.api_key and self.client and self.totp_secret:
             self._connect()
         elif live:
             log.error("Live mode requested but ANGEL_ONE_* env vars not set")
@@ -93,18 +105,35 @@ class AngelOneBroker:
 
     # ── Live quotes ───────────────────────────────────────────────────────────
 
+    # Index trading symbols on Angel One
+    _INDEX_TRADING_SYMBOLS: dict[str, str] = {
+        "NIFTY50":   "Nifty 50",
+        "BANKNIFTY": "Nifty Bank",
+        "NIFTYIT":   "Nifty IT",
+    }
+
     def get_ltp(self, symbol: str) -> float:
-        """Get Last Traded Price for a symbol."""
-        if not self.live or not self._conn:
+        """Get Last Traded Price. Works in both paper and live mode if credentials set."""
+        if not self._conn:
             return 0.0
         try:
-            token  = self._get_token(symbol)
-            exch   = "NSE" if INSTRUMENTS.get(symbol, {}).get("type") == "stock" else "NSE"
-            result = self._conn.ltpData(exch, symbol, token)
+            token = self._get_token(symbol)
+            if not token:
+                return 0.0
+            cfg  = INSTRUMENTS.get(symbol, {})
+            if cfg.get("type") == "index":
+                trad_sym = self._INDEX_TRADING_SYMBOLS.get(symbol, symbol)
+            else:
+                trad_sym = f"{symbol}-EQ"
+            result = self._conn.ltpData("NSE", trad_sym, token)
             return float(result.get("data", {}).get("ltp", 0))
         except Exception as e:
             log.warning(f"LTP fetch {symbol}: {e}")
             return 0.0
+
+    def get_ltp_batch(self, symbols: list[str]) -> dict[str, float]:
+        """Fetch LTP for multiple symbols. Returns {symbol: ltp}."""
+        return {sym: self.get_ltp(sym) for sym in symbols}
 
     def get_quote(self, symbol: str) -> dict:
         """Get full quote for a symbol."""
