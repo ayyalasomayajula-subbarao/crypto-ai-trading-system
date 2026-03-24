@@ -172,9 +172,23 @@ def _paper_scanner_tick():
     _pt_log("SCAN_START", detail=f"Found {len(actionable)} actionable signals out of {len(signals)}")
 
     for sig in actionable:
-        sym = sig["symbol"]
-        v   = sig.get("verdict", "")
+        sym   = sig["symbol"]
+        v     = sig.get("verdict", "")
         score = sig.get("score", 0)
+
+        # Fix 2: Stale entry guard — check how much price has moved since verdict was formed
+        # verdict entry_price = yesterday's close (model reference price)
+        # live LTP = actual current market price
+        ref_price = sig.get("entry_price", 0)
+        ltp = broker.get_ltp(sym)
+        if ref_price > 0 and ltp > 0:
+            gap_pct = abs(ltp - ref_price) / ref_price * 100
+            if gap_pct > 1.0:
+                _pt_log("SKIP", sym, f"Stale entry: price moved {gap_pct:.1f}% from ref (>1.0% limit)", v)
+                log.info(f"[PaperScanner] SKIP {sym}: stale entry gap={gap_pct:.1f}%")
+                continue
+            # 0.5–1.0% drift: acceptable, use live LTP as entry
+            sig["entry_price"] = ltp
 
         # Skip already open
         if any(p["symbol"] == sym for p in paper._state.get("open_positions", [])):
@@ -198,16 +212,53 @@ def _paper_scanner_tick():
 
 
 async def _paper_scanner_loop():
-    """Background loop: run scanner every 15 minutes during market hours."""
+    """
+    Background loop: scan at fixed market-aligned times.
+    First scan: 09:20 IST (after opening noise settles).
+    Subsequent scans: every 15 min — 09:35, 09:50, 10:05 ... 15:20.
+    Outside market hours: sleep and wake up near next open.
+    """
     await asyncio.sleep(5)   # wait for startup
     loop = asyncio.get_event_loop()
+
+    # Fixed scan slots: 09:20 + every 15 min until 15:20
+    SCAN_TIMES = [(9, 20)] + [(h, m) for h in range(9, 16) for m in range(35, 60, 15)
+                               if not (h == 9 and m < 35)] + \
+                 [(15, 5), (15, 20)]
+    # Deduplicate and sort
+    SCAN_TIMES = sorted(set(SCAN_TIMES))
+
     while True:
+        now = datetime.now(IST)
+        today = now.date()
+
+        if now.weekday() >= 5:  # weekend — sleep until Monday 09:15
+            sleep_secs = max(60, (7 - now.weekday()) * 86400 - now.hour * 3600)
+            await asyncio.sleep(sleep_secs)
+            continue
+
+        # Find next scan slot today
+        next_slot = None
+        for h, m in SCAN_TIMES:
+            slot = IST.localize(datetime(today.year, today.month, today.day, h, m, 0))
+            if slot > now:
+                next_slot = slot
+                break
+
+        if next_slot is None:
+            # All scans done for today — sleep until 09:20 tomorrow
+            tomorrow = today + __import__('datetime').timedelta(days=1)
+            next_slot = IST.localize(datetime(tomorrow.year, tomorrow.month, tomorrow.day, 9, 20, 0))
+
+        sleep_secs = (next_slot - now).total_seconds()
+        log.info(f"[PaperScanner] Next scan at {next_slot.strftime('%H:%M IST')} (in {sleep_secs/60:.0f} min)")
+        await asyncio.sleep(max(1, sleep_secs))
+
         if is_market_open():
             try:
                 await loop.run_in_executor(None, _paper_scanner_tick)
             except Exception as e:
                 log.warning(f"[PaperScanner] tick error: {e}")
-        await asyncio.sleep(15 * 60)   # 15-minute interval
 
 
 @app.on_event("startup")
