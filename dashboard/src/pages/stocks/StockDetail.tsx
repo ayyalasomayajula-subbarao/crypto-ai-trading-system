@@ -378,20 +378,41 @@ const StockDetail: React.FC = () => {
                 ))}
               </Grid>
               <Divider sx={{ my: 1.5 }} />
-              <Box display="flex" justifyContent="space-between">
-                <Box>
-                  <Typography variant="caption" color="text.secondary">ML P(UP)</Typography>
-                  <Typography variant="body2" fontWeight={600} color="#69f0ae">
-                    {(verdict.ml_p_up * 100).toFixed(1)}%
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" color="text.secondary">ML P(DOWN)</Typography>
-                  <Typography variant="body2" fontWeight={600} color="#ff5252">
-                    {(verdict.ml_p_down * 100).toFixed(1)}%
-                  </Typography>
-                </Box>
-              </Box>
+              {/* ML Bias — shows model direction clearly, flags conflict with overall verdict */}
+              {(() => {
+                const pUp   = (verdict.ml_p_up   || 0) * 100;
+                const pDown = (verdict.ml_p_down  || 0) * 100;
+                const pSide = Math.max(0, 100 - pUp - pDown);
+                const mlBull = pUp > pDown && pUp > pSide;
+                const mlBear = pDown > pUp && pDown > pSide;
+                const mlLabel = mlBull ? 'Bullish' : mlBear ? 'Bearish' : 'Neutral';
+                const mlColor = mlBull ? '#69f0ae' : mlBear ? '#ff5252' : '#ffd54f';
+                const verdictBull = ['STRONG_BUY','BUY','LEAN_BUY'].includes(verdict.verdict);
+                const verdictBear = ['STRONG_SELL','SELL','LEAN_SELL'].includes(verdict.verdict);
+                const conflict = (mlBear && verdictBull) || (mlBull && verdictBear);
+                return (
+                  <Box>
+                    <Box display="flex" justifyContent="space-between" alignItems="center">
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">ML Bias</Typography>
+                        <Box display="flex" alignItems="center" gap={0.5}>
+                          <Typography variant="body2" fontWeight={700} sx={{ color: mlColor }}>
+                            {mlLabel}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            ({pUp.toFixed(0)}% ↑ · {pDown.toFixed(0)}% ↓ · {pSide.toFixed(0)}% →)
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Box>
+                    {conflict && (
+                      <Typography variant="caption" sx={{ color: '#ffa726', display: 'block', mt: 0.5 }}>
+                        ⚠ ML leans {mlLabel.toLowerCase()} — technical signals override
+                      </Typography>
+                    )}
+                  </Box>
+                );
+              })()}
             </CardContent>
           </Card>
         </Grid>
