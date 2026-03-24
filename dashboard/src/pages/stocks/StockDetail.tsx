@@ -396,7 +396,8 @@ const StockDetail: React.FC = () => {
                       { label: 'Open',       val: dayOhlc.open,       c: '#90caf9' },
                       { label: 'High',       val: dayOhlc.high,       c: '#69f0ae' },
                       { label: 'Low',        val: dayOhlc.low,        c: '#ff5252' },
-                      { label: 'Prev Close', val: dayOhlc.prev_close, c: '#bdbdbd' },
+                      { label: 'Close',      val: displayPrice,       c: '#e0e0e0' },
+                      { label: 'Prev Close', val: dayOhlc.prev_close, c: '#78909c' },
                     ].map(({ label, val, c }) => (
                       <Box key={label}>
                         <Typography variant="caption" color="text.secondary">{label}</Typography>
