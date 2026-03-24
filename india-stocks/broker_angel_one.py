@@ -112,24 +112,41 @@ class AngelOneBroker:
         "NIFTYIT":   "Nifty IT",
     }
 
-    def get_ltp(self, symbol: str) -> float:
-        """Get Last Traded Price. Works in both paper and live mode if credentials set."""
+    def _trading_symbol(self, symbol: str) -> str:
+        cfg = INSTRUMENTS.get(symbol, {})
+        if cfg.get("type") == "index":
+            return self._INDEX_TRADING_SYMBOLS.get(symbol, symbol)
+        return f"{symbol}-EQ"
+
+    def get_ohlc(self, symbol: str) -> dict:
+        """
+        Get full day OHLC + LTP via ltpData (zero delay).
+        Returns {"ltp", "open", "high", "low", "close"} or {} on error.
+        """
         if not self._conn:
-            return 0.0
+            return {}
         try:
             token = self._get_token(symbol)
             if not token:
-                return 0.0
-            cfg  = INSTRUMENTS.get(symbol, {})
-            if cfg.get("type") == "index":
-                trad_sym = self._INDEX_TRADING_SYMBOLS.get(symbol, symbol)
-            else:
-                trad_sym = f"{symbol}-EQ"
-            result = self._conn.ltpData("NSE", trad_sym, token)
-            return float(result.get("data", {}).get("ltp", 0))
+                return {}
+            result = self._conn.ltpData("NSE", self._trading_symbol(symbol), token)
+            d = result.get("data", {})
+            if not d:
+                return {}
+            return {
+                "ltp":   float(d.get("ltp",   0)),
+                "open":  float(d.get("open",  0)),
+                "high":  float(d.get("high",  0)),
+                "low":   float(d.get("low",   0)),
+                "close": float(d.get("close", 0)),
+            }
         except Exception as e:
-            log.warning(f"LTP fetch {symbol}: {e}")
-            return 0.0
+            log.warning(f"OHLC fetch {symbol}: {e}")
+            return {}
+
+    def get_ltp(self, symbol: str) -> float:
+        """Get Last Traded Price. Works in both paper and live mode if credentials set."""
+        return self.get_ohlc(symbol).get("ltp", 0.0)
 
     def get_ltp_batch(self, symbols: list[str]) -> dict[str, float]:
         """Fetch LTP for multiple symbols. Returns {symbol: ltp}."""

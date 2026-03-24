@@ -240,6 +240,7 @@ const StockDetail: React.FC = () => {
   const [loading, setLoading]  = useState(true);
   const [error, setError]      = useState('');
   const [livePrice, setLivePrice] = useState<number | undefined>();
+  const [dayOhlc, setDayOhlc]     = useState<any>(null);
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -257,8 +258,9 @@ const StockDetail: React.FC = () => {
         try {
           const msg = JSON.parse(e.data);
           if (msg.type === 'initial' || msg.type === 'prices') {
-            const p = msg.data?.[sym]?.price;
-            if (p) setLivePrice(p);
+            const d = msg.data?.[sym];
+            if (d?.price) setLivePrice(d.price);
+            if (d) setDayOhlc(d);
           }
         } catch {}
       };
@@ -270,14 +272,16 @@ const StockDetail: React.FC = () => {
 
   const fetchVerdict = useCallback(async () => {
     try {
-      const [vRes, hRes, bRes] = await Promise.all([
+      const [vRes, hRes, bRes, pRes] = await Promise.all([
         fetch(`${STOCKS_API}/stocks/verdict/${sym}`),
         fetch(`${STOCKS_API}/stocks/verdict-history/${sym}?limit=30`),
         fetch(`${STOCKS_API}/stocks/backtest/${sym}`),
+        fetch(`${STOCKS_API}/stocks/prices/${sym}`),
       ]);
       if (vRes.ok) setVerdict(await vRes.json());
       if (hRes.ok) setHistory(await hRes.json());
       if (bRes.ok) setBacktest(await bRes.json());
+      if (pRes.ok) { const pd = await pRes.json(); setDayOhlc(pd); if (pd?.price) setLivePrice(pd.price); }
     } catch {
       setError('Cannot connect to stocks API (port 8000)');
     } finally {
@@ -354,6 +358,65 @@ const StockDetail: React.FC = () => {
                   Conviction: {verdict.score.toFixed(0)} / 100
                 </Typography>
               </Box>
+
+              {/* Day OHLC */}
+              {dayOhlc && (
+                <Box mt={2} pt={1.5} sx={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                  {/* High/Low range bar */}
+                  {dayOhlc.high > 0 && dayOhlc.low > 0 && (
+                    <Box mb={1.5}>
+                      <Box display="flex" justifyContent="space-between" mb={0.5}>
+                        <Typography variant="caption" sx={{ color: '#ff5252' }}>
+                          ₹{dayOhlc.low?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                          Day's Range
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#69f0ae' }}>
+                          ₹{dayOhlc.high?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ position: 'relative', height: 4, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.08)' }}>
+                        {(() => {
+                          const range = dayOhlc.high - dayOhlc.low;
+                          const pct   = range > 0 ? ((displayPrice - dayOhlc.low) / range) * 100 : 50;
+                          return (
+                            <Box sx={{ position: 'absolute', left: 0, top: 0, height: '100%',
+                              width: `${Math.min(100, Math.max(2, pct))}%`,
+                              borderRadius: 2,
+                              background: 'linear-gradient(90deg, #ff5252, #ffd54f, #69f0ae)' }} />
+                          );
+                        })()}
+                      </Box>
+                    </Box>
+                  )}
+                  {/* OHLC grid */}
+                  <Box display="grid" gridTemplateColumns="1fr 1fr" gap={0.5}>
+                    {[
+                      { label: 'Open',       val: dayOhlc.open,       c: '#90caf9' },
+                      { label: 'High',       val: dayOhlc.high,       c: '#69f0ae' },
+                      { label: 'Low',        val: dayOhlc.low,        c: '#ff5252' },
+                      { label: 'Prev Close', val: dayOhlc.prev_close, c: '#bdbdbd' },
+                    ].map(({ label, val, c }) => (
+                      <Box key={label}>
+                        <Typography variant="caption" color="text.secondary">{label}</Typography>
+                        <Typography variant="body2" fontWeight={600} sx={{ color: c }}>
+                          ₹{(val || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Box>
+                  {dayOhlc.change_pct !== undefined && (
+                    <Typography variant="caption" mt={0.5} display="block"
+                      sx={{ color: dayOhlc.change_pct >= 0 ? '#69f0ae' : '#ff5252' }}>
+                      {dayOhlc.change_pct >= 0 ? '▲' : '▼'} {Math.abs(dayOhlc.change_pct).toFixed(2)}% vs prev close
+                      {dayOhlc.source === 'angel_one' && (
+                        <Typography component="span" variant="caption" sx={{ color: '#546e7a', ml: 1 }}>· live</Typography>
+                      )}
+                    </Typography>
+                  )}
+                </Box>
+              )}
             </CardContent>
           </Card>
         </Grid>

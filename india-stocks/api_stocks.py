@@ -231,22 +231,21 @@ def _fetch_angel_one_prices() -> dict:
     result = {}
     try:
         for sym in ACTIVE_SYMBOLS:
-            ltp = broker.get_ltp(sym)
-            if ltp <= 0:
+            ohlc = broker.get_ohlc(sym)
+            if not ohlc or ohlc.get("ltp", 0) <= 0:
                 continue
-            prev_close = 0.0
-            path_1d = ohlcv_path(sym, "1d")
-            if os.path.exists(path_1d):
-                hist = pd.read_csv(path_1d, index_col=0, parse_dates=True)
-                if not hist.empty:
-                    prev_close = float(hist["close"].iloc[-1])
+            ltp        = ohlc["ltp"]
+            prev_close = ohlc["close"]   # yesterday's close from Angel One
+            day_open   = ohlc["open"]
+            day_high   = ohlc["high"]
+            day_low    = ohlc["low"]
             change_pct = ((ltp - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
             result[sym] = {
                 "symbol":       sym,
                 "price":        round(ltp, 2),
-                "open":         round(prev_close, 2),   # day open not in LTP endpoint
-                "high":         round(ltp, 2),
-                "low":          round(ltp, 2),
+                "open":         round(day_open, 2),
+                "high":         round(day_high, 2),
+                "low":          round(day_low, 2),
                 "prev_close":   round(prev_close, 2),
                 "volume":       0,
                 "change_pct":   round(change_pct, 2),
