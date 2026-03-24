@@ -115,6 +115,21 @@ def _get_size_multiplier(symbol: str) -> float:
         return 0.0
 
 
+def get_wf_multiplier(symbol: str) -> float:
+    """Public wrapper — returns WF position-size multiplier (0.0 = NOT_VIABLE)."""
+    return _get_size_multiplier(symbol)
+
+
+def get_wf_tier(symbol: str) -> str:
+    """Return human-readable WF tier label for a symbol."""
+    m = _get_size_multiplier(symbol)
+    if m == 0.0:
+        return "NOT_VIABLE"
+    if m >= 0.7:
+        return "VIABLE"
+    return "MARGINAL"
+
+
 # ─── Market hours ────────────────────────────────────────────────────────────
 
 def is_market_open(ts: datetime | None = None) -> bool:

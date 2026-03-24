@@ -304,6 +304,9 @@ const StockDetail: React.FC = () => {
   const color        = VERDICT_COLORS[verdict.verdict] || '#9e9e9e';
   const isBull       = verdict.direction === 'LONG';
   const isBear       = verdict.direction === 'SHORT';
+  const wfTier       = verdict.wf_tier || 'NOT_VIABLE';
+  const isNotViable  = wfTier === 'NOT_VIABLE';
+  const wfTierColor  = wfTier === 'VIABLE' ? '#69f0ae' : wfTier === 'MARGINAL' ? '#ffd54f' : '#616161';
   const displayPrice = livePrice ?? verdict.current_price ?? 0;
 
   return (
@@ -421,10 +424,20 @@ const StockDetail: React.FC = () => {
         <Grid item xs={12} md={4}>
           <Card className="detail-card" sx={{ height: '100%' }}>
             <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <Typography variant="body2" color="text.secondary">Actions</Typography>
+              <Box display="flex" justifyContent="space-between" alignItems="center">
+                <Typography variant="body2" color="text.secondary">Actions</Typography>
+                <Chip size="small" label={wfTier}
+                  sx={{ fontSize: '0.65rem', height: 20,
+                        bgcolor: wfTierColor + '22', color: wfTierColor, fontWeight: 700 }} />
+              </Box>
+              {isNotViable && (
+                <Typography variant="caption" sx={{ color: '#616161' }}>
+                  WF backtest not viable — trading disabled for this symbol
+                </Typography>
+              )}
               <Button fullWidth variant="contained"
                 color={isBull ? 'success' : isBear ? 'error' : 'primary'}
-                disabled={verdict.direction === 'NEUTRAL'}
+                disabled={verdict.direction === 'NEUTRAL' || isNotViable}
                 onClick={async () => {
                   await fetch(`${STOCKS_API}/stocks/paper-trading/open`,
                     { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -432,7 +445,7 @@ const StockDetail: React.FC = () => {
                   alert(`Paper trade opened: ${verdict.direction} ${sym}`);
                 }}
                 sx={{ fontWeight: 700 }}>
-                {verdict.direction === 'NEUTRAL' ? 'No Signal' : `Paper ${verdict.direction} ${sym}`}
+                {isNotViable ? 'Trading Disabled' : verdict.direction === 'NEUTRAL' ? 'No Signal' : `Paper ${verdict.direction} ${sym}`}
               </Button>
               <Button fullWidth variant="outlined" color="secondary"
                 onClick={() => navigate('/stocks/market/pulse')}>

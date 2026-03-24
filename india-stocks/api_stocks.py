@@ -26,7 +26,7 @@ from config import (
     OPTION_CHAIN_DIR,
 )
 from precision_verdict import VerdictEngine
-from paper_trader import PaperTrader, is_market_open
+from paper_trader import PaperTrader, is_market_open, get_wf_multiplier, get_wf_tier
 from broker_angel_one import AngelOneBroker
 
 logging.basicConfig(level=logging.INFO,
@@ -481,7 +481,10 @@ def get_verdict(symbol: str, force: bool = False):
     sym = symbol.upper()
     if sym not in INSTRUMENTS:
         raise HTTPException(404, f"Symbol {sym} not found")
-    return verdict.get_verdict(sym, force=force)
+    result = verdict.get_verdict(sym, force=force)
+    result["wf_tier"]       = get_wf_tier(sym)
+    result["wf_multiplier"] = get_wf_multiplier(sym)
+    return result
 
 
 @app.get("/stocks/verdict-history/{symbol}")
