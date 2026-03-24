@@ -220,7 +220,7 @@ class PaperTrader:
 
             wf_mult = _get_size_multiplier(symbol)
             if wf_mult == 0.0:
-                return {"ok": False, "reason": f"{symbol} disabled — recent fold edge failure (0.0x tier)"}
+                return {"ok": False, "reason": f"{symbol} disabled — WF backtest not viable (0.0x tier)"}
 
             cfg          = INSTRUMENTS[symbol]
             lot_size     = cfg["lot_size"]
@@ -228,10 +228,17 @@ class PaperTrader:
             tp_pct       = cfg["tp_pct"] / 100
             sl_pct       = cfg["sl_pct"] / 100
 
-            # Position sizing: MAX_POSITION_PCT × WF multiplier
-            position_value = self._state["capital"] * MAX_POSITION_PCT * wf_mult
-            lots           = max(1, int(position_value / (entry_price * lot_size)))
-            qty            = lots * lot_size
+            # Score-based multiplier: scales position by conviction level
+            verd = verdict.get("verdict", "")
+            if direction == "LONG":
+                score_mult = 1.0 if score >= 65 else 0.75 if score >= 55 else 0.5
+            else:  # SHORT
+                score_mult = 1.0 if score <= 25 else 0.75 if score <= 35 else 0.5
+
+            # Position sizing: capital × 15% × WF_mult × score_mult → raw shares (no forced lot minimum)
+            position_value = self._state["capital"] * MAX_POSITION_PCT * wf_mult * score_mult
+            qty            = max(1, int(position_value / entry_price))
+            lots           = max(1, qty // lot_size) if qty >= lot_size else 1
             trade_value    = qty * entry_price
 
             if trade_value > self._state["available"]:
@@ -259,6 +266,7 @@ class PaperTrader:
                 "unrealized_pnl": 0.0,
                 "unrealized_pct": 0.0,
                 "verdict_score":  score,
+                "score_mult":     score_mult,
                 "time_limit_days": cfg["time_limit_days"],
                 "wf_size_mult":   wf_mult,
             }
