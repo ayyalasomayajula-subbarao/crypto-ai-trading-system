@@ -144,7 +144,9 @@ const StocksPortfolio: React.FC = () => {
               <TableRow>
                 <TableCell>Symbol</TableCell>
                 <TableCell>Direction</TableCell>
-                <TableCell>Entry</TableCell>
+                <TableCell>Entry Price</TableCell>
+                <TableCell>Entry Time</TableCell>
+                <TableCell>Capital</TableCell>
                 <TableCell>Qty</TableCell>
                 <TableCell>Target</TableCell>
                 <TableCell>SL</TableCell>
@@ -163,6 +165,15 @@ const StocksPortfolio: React.FC = () => {
                       icon={pos.direction === 'LONG' ? <TrendingUpIcon /> : <TrendingDownIcon />} />
                   </TableCell>
                   <TableCell>₹{pos.entry_price?.toFixed(2)}</TableCell>
+                  <TableCell sx={{ color: '#78909c', fontSize: '0.75rem' }}>
+                    {pos.entry_time ? (() => {
+                      const d = new Date(pos.entry_time);
+                      return `${d.toLocaleDateString('en-IN', { day:'2-digit', month:'short' })} ${d.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12: true })}`;
+                    })() : '—'}
+                  </TableCell>
+                  <TableCell sx={{ color: '#90caf9', fontWeight: 600 }}>
+                    ₹{(pos.trade_value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                  </TableCell>
                   <TableCell>{pos.qty} ({pos.lots} lot)</TableCell>
                   <TableCell sx={{ color: '#69f0ae' }}>₹{pos.target_price?.toFixed(2)}</TableCell>
                   <TableCell sx={{ color: '#ff5252' }}>₹{pos.sl_price?.toFixed(2)}</TableCell>

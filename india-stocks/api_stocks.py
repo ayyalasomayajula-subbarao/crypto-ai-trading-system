@@ -26,7 +26,7 @@ from config import (
     OPTION_CHAIN_DIR,
 )
 from precision_verdict import VerdictEngine
-from paper_trader import PaperTrader, is_market_open
+from paper_trader import PaperTrader, is_market_open, get_wf_multiplier, get_wf_tier
 from broker_angel_one import AngelOneBroker
 
 logging.basicConfig(level=logging.INFO,
@@ -216,40 +216,136 @@ async def startup():
 
 # ─── Price helpers ────────────────────────────────────────────────────────────
 
+def _fetch_intraday_prices() -> dict:
+    """
+    During market hours: fetch live intraday prices via yfinance 1m (~15 min delay).
+    Returns dict keyed by symbol with current price, open, high, low, change_pct vs prev close.
+    """
+    import yfinance as yf
+    import pandas as pd
+    from config import ohlcv_path
+
+    result = {}
+    # Batch download all symbols in one call
+    yf_symbols = [INSTRUMENTS[s]["yf_symbol"] for s in ACTIVE_SYMBOLS if s in INSTRUMENTS]
+    sym_map    = {INSTRUMENTS[s]["yf_symbol"]: s for s in ACTIVE_SYMBOLS if s in INSTRUMENTS}
+
+    try:
+        raw = yf.download(
+            tickers=" ".join(yf_symbols),
+            period="1d", interval="1m",
+            group_by="ticker", auto_adjust=True, progress=False,
+        )
+    except Exception as e:
+        log.warning(f"Intraday yfinance fetch failed: {e}")
+        return {}
+
+    for yf_sym, sym in sym_map.items():
+        try:
+            # Multi-ticker download uses (ticker, field) column MultiIndex
+            if len(yf_symbols) > 1:
+                df = raw[yf_sym].dropna(how="all")
+            else:
+                df = raw.dropna(how="all")
+
+            if df.empty:
+                continue
+
+            # Prev close from 1D CSV
+            prev_close = 0.0
+            path_1d = ohlcv_path(sym, "1d")
+            if os.path.exists(path_1d):
+                hist = pd.read_csv(path_1d, index_col=0, parse_dates=True)
+                if not hist.empty:
+                    prev_close = float(hist["close"].iloc[-1])
+
+            current = float(df["Close"].iloc[-1])
+            day_open = float(df["Open"].iloc[0])
+            day_high = float(df["High"].max())
+            day_low  = float(df["Low"].min())
+            volume   = int(df["Volume"].sum())
+            change_pct = ((current - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
+
+            result[sym] = {
+                "symbol":       sym,
+                "price":        round(current, 2),
+                "open":         round(day_open, 2),
+                "high":         round(day_high, 2),
+                "low":          round(day_low, 2),
+                "prev_close":   round(prev_close, 2),
+                "volume":       volume,
+                "change_pct":   round(change_pct, 2),
+                "timestamp":    str(df.index[-1]),
+                "display_name": INSTRUMENTS[sym].get("display_name", sym),
+                "sector":       INSTRUMENTS[sym].get("sector", ""),
+                "type":         INSTRUMENTS[sym].get("type", ""),
+                "live":         True,
+            }
+        except Exception as e:
+            log.warning(f"Intraday parse {sym}: {e}")
+
+    return result
+
+
 async def _get_live_prices() -> dict:
-    """Get latest prices from stored 1D data (updates via collect_nse_data)."""
-    cached = _cache_get("prices", 30)
+    """
+    During market hours: live intraday prices (yfinance 1m, ~15 min delay).
+    Outside market hours: last stored 1D close.
+    Cache: 60s during market, 300s outside.
+    """
+    market_open = is_market_open()
+    ttl = 60 if market_open else 300
+    cached = _cache_get("prices", ttl)
     if cached is not None:
         return cached
 
     import pandas as pd
+    from config import ohlcv_path
+
     prices = {}
+
+    # During market hours — fetch live intraday
+    if market_open:
+        try:
+            prices = await asyncio.get_event_loop().run_in_executor(
+                None, _fetch_intraday_prices
+            )
+        except Exception as e:
+            log.warning(f"Intraday fetch error: {e}")
+
+    # Fill any missing symbols (or all symbols outside market hours) from 1D CSV
     for sym in ACTIVE_SYMBOLS:
-        from config import ohlcv_path
+        if sym in prices:
+            continue
         path = ohlcv_path(sym, "1d")
-        if os.path.exists(path):
-            try:
-                df = pd.read_csv(path, index_col=0, parse_dates=True)
-                if not df.empty:
-                    last = df.iloc[-1]
-                    prev = df.iloc[-2] if len(df) > 1 else last
-                    change_pct = ((last["close"] - prev["close"]) / prev["close"] * 100
-                                  if prev["close"] > 0 else 0)
-                    prices[sym] = {
-                        "symbol":      sym,
-                        "price":       round(float(last["close"]), 2),
-                        "open":        round(float(last["open"]), 2),
-                        "high":        round(float(last["high"]), 2),
-                        "low":         round(float(last["low"]), 2),
-                        "volume":      int(last["volume"]),
-                        "change_pct":  round(change_pct, 2),
-                        "timestamp":   str(df.index[-1]),
-                        "display_name": INSTRUMENTS[sym].get("display_name", sym),
-                        "sector":      INSTRUMENTS[sym].get("sector", ""),
-                        "type":        INSTRUMENTS[sym].get("type", ""),
-                    }
-            except Exception:
-                pass
+        if not os.path.exists(path):
+            continue
+        try:
+            df = pd.read_csv(path, index_col=0, parse_dates=True)
+            if df.empty:
+                continue
+            last = df.iloc[-1]
+            prev = df.iloc[-2] if len(df) > 1 else last
+            change_pct = ((last["close"] - prev["close"]) / prev["close"] * 100
+                          if prev["close"] > 0 else 0)
+            prices[sym] = {
+                "symbol":       sym,
+                "price":        round(float(last["close"]), 2),
+                "open":         round(float(last["open"]), 2),
+                "high":         round(float(last["high"]), 2),
+                "low":          round(float(last["low"]), 2),
+                "prev_close":   round(float(prev["close"]), 2),
+                "volume":       int(last["volume"]),
+                "change_pct":   round(change_pct, 2),
+                "timestamp":    str(df.index[-1]),
+                "display_name": INSTRUMENTS[sym].get("display_name", sym),
+                "sector":       INSTRUMENTS[sym].get("sector", ""),
+                "type":         INSTRUMENTS[sym].get("type", ""),
+                "live":         False,
+            }
+        except Exception:
+            pass
+
     _cache_set("prices", prices)
     return prices
 
@@ -385,7 +481,10 @@ def get_verdict(symbol: str, force: bool = False):
     sym = symbol.upper()
     if sym not in INSTRUMENTS:
         raise HTTPException(404, f"Symbol {sym} not found")
-    return verdict.get_verdict(sym, force=force)
+    result = verdict.get_verdict(sym, force=force)
+    result["wf_tier"]       = get_wf_tier(sym)
+    result["wf_multiplier"] = get_wf_multiplier(sym)
+    return result
 
 
 @app.get("/stocks/verdict-history/{symbol}")
