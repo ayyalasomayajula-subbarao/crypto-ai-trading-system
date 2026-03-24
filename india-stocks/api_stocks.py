@@ -158,11 +158,15 @@ def _paper_scanner_tick():
         log.warning(f"[PaperScanner] scan_all error: {e}")
         return
 
+    # Bidirectional filter — match how WF backtest selected trades:
+    #   LONG:  direction=LONG  + score >= 55  (BUY / STRONG_BUY range)
+    #   SHORT: direction=SHORT + score <= 40  (SELL / STRONG_SELL range, bearish = low score)
     actionable = [
         s for s in signals
-        if s.get("verdict") in ("STRONG_BUY", "BUY", "LEAN_BUY",
-                                "STRONG_SELL", "SELL", "LEAN_SELL")
-        and s.get("score", 0) >= 55   # slightly above MIN_CONFIDENCE for auto-entry
+        if (
+            (s.get("direction") == "LONG"  and s.get("score", 0) >= 55) or
+            (s.get("direction") == "SHORT" and s.get("score", 0) <= 40)
+        )
     ]
 
     _pt_log("SCAN_START", detail=f"Found {len(actionable)} actionable signals out of {len(signals)}")
