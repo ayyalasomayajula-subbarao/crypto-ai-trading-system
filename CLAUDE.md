@@ -66,4 +66,33 @@ AVAX: TP=7.5% SL=2.5% 72h | BNB: TP=6% SL=2% 48h | LINK: TP=7.5% SL=2.5% 72h
 - Full deploy reference: see EC2_DEPLOYMENT.md
 - Python 3.9 venv — all `X | None` type hints require `from __future__ import annotations`
 - REACT_APP_WS_URL must be empty in .env.production (fallback handles /ws/prices path)
-- Viable models on EC2: BTC+LINK (crypto), NIFTY50+BANKNIFTY+NIFTYIT+TITAN+AXISBANK (stocks)
+- Viable models on EC2: BTC+LINK (crypto), 25 India stocks symbols (v9 expanded universe)
+- Restart stocks API: `pkill -f 'uvicorn api_stocks'` then `nohup uvicorn api_stocks:app --host 0.0.0.0 --port 8001 >> /tmp/stocks_api.log 2>&1 &`
+- Deploy frontend: build locally → rsync dashboard/build/ to EC2 (no API restart needed)
+
+## India Stocks — Position Sizing Formula (v9)
+```
+trade_capital = ₹10L × 15% × WF_multiplier × score_multiplier
+qty = int(trade_capital / entry_price)   # raw shares — NO forced lot minimum
+```
+- score_multiplier: LONG score≥65 or SHORT score≤25 → 1.0x | BUY/SELL → 0.75x | LEAN → 0.5x
+- WF_multiplier: 5+ valid folds → 0.7x | 3-4 → 0.5x | 2 → 0.3x | NOT_VIABLE → 0.0x (blocked)
+- DO NOT use `max(1 lot)` — forces oversized positions (RELIANCE lot=250 shares = ₹3.5L vs intended ₹52K)
+- Max 5 open positions, max daily loss 3% of capital
+
+## India Stocks — Key API Fields (v9)
+- `/stocks/verdict/{symbol}` returns: `wf_tier` (VIABLE/MARGINAL/NOT_VIABLE) + `wf_multiplier` (float)
+- `paper_trader.py` exports: `get_wf_multiplier(symbol)`, `get_wf_tier(symbol)` (public helpers)
+- Position object includes: `trade_value`, `entry_time`, `verdict_score`, `score_mult`, `wf_size_mult`
+
+## India Stocks — Auto-Scanner (v9)
+- Background loop in `api_stocks.py`: scans all 25 symbols every 15 min during market hours (09:15–15:30 IST)
+- LONG entry: score≥55 + direction=LONG | SHORT entry: score≤40 + direction=SHORT
+- Activity ring buffer (100 events) at `/stocks/paper-trading/activity`
+- Live intraday prices: yfinance 1m batch fetch during market hours (60s cache), 1D CSV outside hours (300s cache)
+
+## India Stocks — Instruments (v9, 25 symbols)
+3 indices: NIFTY50, BANKNIFTY, NIFTYIT
+22 stocks: RELIANCE, TCS, HDFCBANK, ICICIBANK, INFY, HCLTECH, BAJFINANCE, SBIN, AXISBANK,
+           MARUTI, TITAN, LT, DRREDDY, BAJAJFINSV, ULTRACEMCO, ASIANPAINT, KOTAKBANK,
+           CIPLA, WIPRO, BHARTIARTL, SUNPHARMA, TECHM
