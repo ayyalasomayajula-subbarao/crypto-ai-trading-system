@@ -200,11 +200,15 @@ def _score_rsi(row: pd.Series, tf: str = "1d") -> float:
     return (50 - rsi) / 50 * 0.3  # mild signal in neutral zone
 
 
-def _score_macd(row: pd.Series, tf: str = "1d") -> float:
+def _score_macd(row: pd.Series, tf: str = "1d", price: float = 0.0) -> float:
     val = float(row.get(f"{tf}_macd_diff", 0) or 0)
-    # Normalize by ATR
-    atr = float(row.get(f"{tf}_atr_pct", 0.01) or 0.01)
-    return np.clip(val / (atr * 100 + 1e-9), -1, 1)
+    atr_pct = float(row.get(f"{tf}_atr_pct", 0.01) or 0.01)
+    # macd_diff is in price units; normalize as % of price then divide by ATR%
+    if price > 0:
+        val_pct = val / price  # MACD diff as fraction of price
+        return np.clip(val_pct / (atr_pct + 1e-9), -1, 1)
+    # Fallback: treat macd_diff as already a small absolute value
+    return np.clip(val / (atr_pct * 100 + 1e-9), -1, 1)
 
 
 def _score_adx(row: pd.Series, tf: str = "1d") -> float:
@@ -219,7 +223,10 @@ def _score_adx(row: pd.Series, tf: str = "1d") -> float:
 
 
 def _score_pcr(row: pd.Series) -> float:
-    pcr = float(row.get("pcr_7d_avg", row.get("pcr", 1.0)) or 1.0)
+    raw = row.get("pcr_7d_avg", row.get("pcr", None))
+    if raw is None or (isinstance(raw, float) and np.isnan(raw)):
+        return 0.0  # no PCR data → neutral
+    pcr = float(raw)
     if pcr <= PCR_STRONG_BULLISH:   return  1.0
     if pcr <= PCR_BULLISH:          return  0.6
     if pcr <= PCR_NEUTRAL_LOW:      return  0.2
@@ -260,8 +267,11 @@ def _score_oi_change(row: pd.Series) -> float:
 
 
 def _score_delivery(row: pd.Series) -> float:
-    """Delivery % > 50% = genuine buying."""
-    del_pct = float(row.get("delivery_pct", 50) or 50)
+    """Delivery % > 50% = genuine buying. Returns 0 if data unavailable."""
+    raw = row.get("delivery_pct")
+    if raw is None or (isinstance(raw, float) and np.isnan(raw)):
+        return 0.0  # no delivery data → neutral
+    del_pct = float(raw)
     if del_pct >= 60:   return  0.8
     if del_pct >= 50:   return  0.4
     if del_pct >= 40:   return  0.0
@@ -269,7 +279,15 @@ def _score_delivery(row: pd.Series) -> float:
 
 
 def _score_advance_decline(row: pd.Series) -> float:
-    ad = float(row.get("ad_ratio", 0.5) or 0.5)
+    raw = row.get("ad_ratio")
+    raw_7d = row.get("ad_ratio_7d_avg")
+    # Prefer 7d avg: single-day 0.0 often a data gap, not literal 0% advances
+    if raw_7d is not None and not (isinstance(raw_7d, float) and np.isnan(raw_7d)):
+        ad = float(raw_7d)
+    elif raw is not None and not (isinstance(raw, float) and np.isnan(raw)):
+        ad = float(raw)
+    else:
+        return 0.0
     # ad_ratio: fraction of advances (0.5 = neutral)
     return np.clip((ad - 0.5) * 4, -1, 1)
 
@@ -434,7 +452,7 @@ class VerdictEngine:
             "price_vs_sma21_1d": _score_sma(row, "1d", 21),
             "price_vs_sma50_1d": _score_sma(row, "1d", 50),
             "rsi_1d":            _score_rsi(row),
-            "macd_1d":           _score_macd(row),
+            "macd_1d":           _score_macd(row, price=current_price),
             "adx_1d":            _score_adx(row),
             "pcr":               _score_pcr(row),
             "india_vix":         _score_india_vix(row),
