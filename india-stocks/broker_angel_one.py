@@ -81,25 +81,6 @@ class AngelOneBroker:
         elif live:
             log.error("Live mode requested but ANGEL_ONE_* env vars not set")
 
-    def _connect(self) -> bool:
-        """Authenticate and create SmartAPI session."""
-        try:
-            from SmartApi import SmartConnect
-            self._conn = SmartConnect(api_key=self.api_key)
-            totp = pyotp.TOTP(self.totp_secret).now() if self.totp_secret else "000000"
-            data = self._conn.generateSession(self.client, self.password, totp)
-            if data and data.get("status"):
-                log.info("Angel One: connected successfully")
-                return True
-            log.error(f"Angel One auth failed: {data}")
-            return False
-        except ImportError:
-            log.error("smartapi-python not installed: pip install smartapi-python pyotp")
-            return False
-        except Exception as e:
-            log.error(f"Angel One connect error: {e}")
-            return False
-
     def _get_token(self, symbol: str) -> str:
         return _TOKEN_CACHE.get(symbol, "")
 
@@ -118,11 +99,45 @@ class AngelOneBroker:
             return self._INDEX_TRADING_SYMBOLS.get(symbol, symbol)
         return f"{symbol}-EQ"
 
+    def _reconnect_if_needed(self) -> bool:
+        """Reconnect if session is stale. Called before every API call."""
+        if not self._conn:
+            return self._connect()
+        # Check session age — Angel One JWT expires after ~24h; refresh every 6h to be safe
+        if not hasattr(self, '_connected_at'):
+            self._connected_at = time.time()
+        if time.time() - self._connected_at > 6 * 3600:
+            log.info("Angel One: refreshing session (6h limit)")
+            return self._connect()
+        return True
+
+    def _connect(self) -> bool:
+        """Authenticate and create SmartAPI session."""
+        try:
+            from SmartApi import SmartConnect
+            self._conn = SmartConnect(api_key=self.api_key)
+            totp = pyotp.TOTP(self.totp_secret).now() if self.totp_secret else "000000"
+            data = self._conn.generateSession(self.client, self.password, totp)
+            if data and data.get("status"):
+                self._connected_at = time.time()
+                log.info("Angel One: connected successfully")
+                return True
+            log.error(f"Angel One auth failed: {data}")
+            return False
+        except ImportError:
+            log.error("smartapi-python not installed: pip install smartapi-python pyotp")
+            return False
+        except Exception as e:
+            log.error(f"Angel One connect error: {e}")
+            return False
+
     def get_ohlc(self, symbol: str) -> dict:
         """
         Get full day OHLC + LTP via ltpData (zero delay).
         Returns {"ltp", "open", "high", "low", "close"} or {} on error.
+        Auto-reconnects if session expired.
         """
+        self._reconnect_if_needed()
         if not self._conn:
             return {}
         try:
@@ -131,6 +146,11 @@ class AngelOneBroker:
                 return {}
             result = self._conn.ltpData("NSE", self._trading_symbol(symbol), token)
             d = result.get("data", {})
+            if not d:
+                # Session may have expired mid-run — reconnect once and retry
+                if self._connect():
+                    result = self._conn.ltpData("NSE", self._trading_symbol(symbol), token)
+                    d = result.get("data", {})
             if not d:
                 return {}
             return {
