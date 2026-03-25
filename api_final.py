@@ -4550,6 +4550,14 @@ async def proxy_stocks_http(path: str, request: Request):
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 content = await resp.read()
+                # If stocks API returns 404 on a GET, it's likely a frontend route
+                # (e.g. /stocks/RELIANCE page reload) — serve index.html instead
+                if resp.status == 404 and request.method == "GET":
+                    from starlette.responses import FileResponse as _FR
+                    index = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "dashboard", "build", "index.html")
+                    if os.path.isfile(index):
+                        return _FR(index)
                 return Response(content=content, status_code=resp.status,
                                 media_type=resp.content_type)
     except Exception as e:
