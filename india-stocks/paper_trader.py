@@ -214,7 +214,8 @@ class PaperTrader:
             if any(p["symbol"] == symbol for p in open_pos):
                 return {"ok": False, "reason": f"Already in {symbol}"}
 
-            if score / 100 < MIN_CONFIDENCE:
+            confidence = score / 100 if direction == "LONG" else (100 - score) / 100
+            if confidence < MIN_CONFIDENCE:
                 return {"ok": False, "reason": f"Confidence too low ({score:.0f})"}
 
             wf_mult = _get_size_multiplier(symbol)

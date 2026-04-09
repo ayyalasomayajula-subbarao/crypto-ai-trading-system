@@ -161,13 +161,13 @@ def _paper_scanner_tick():
         return
 
     # Bidirectional filter — match how WF backtest selected trades:
-    #   LONG:  direction=LONG  + score >= 55  (BUY / STRONG_BUY range)
-    #   SHORT: direction=SHORT + score <= 40  (SELL / STRONG_SELL range, bearish = low score)
+    #   LONG:  direction=LONG  + score >= 50  (LEAN_BUY and above)
+    #   SHORT: direction=SHORT + score <= 50  (LEAN_SELL and below)
     actionable = [
         s for s in signals
         if (
-            (s.get("direction") == "LONG"  and s.get("score", 0) >= 55) or
-            (s.get("direction") == "SHORT" and s.get("score", 0) <= 40)
+            (s.get("direction") == "LONG"  and s.get("score", 0) >= 50) or
+            (s.get("direction") == "SHORT" and s.get("score", 0) <= 50)
         )
     ]
 
@@ -185,11 +185,11 @@ def _paper_scanner_tick():
         ltp = broker.get_ltp(sym)
         if ref_price > 0 and ltp > 0:
             gap_pct = abs(ltp - ref_price) / ref_price * 100
-            if gap_pct > 1.0:
-                _pt_log("SKIP", sym, f"Stale entry: price moved {gap_pct:.1f}% from ref (>1.0% limit)", v)
+            if gap_pct > 2.0:
+                _pt_log("SKIP", sym, f"Stale entry: price moved {gap_pct:.1f}% from ref (>2.0% limit)", v)
                 log.info(f"[PaperScanner] SKIP {sym}: stale entry gap={gap_pct:.1f}%")
                 continue
-            # 0.5–1.0% drift: acceptable, use live LTP as entry
+            # up to 2% drift: acceptable, use live LTP as entry
             sig["entry_price"] = ltp
 
         # Skip already open
@@ -203,9 +203,10 @@ def _paper_scanner_tick():
             sig["entry_price"] = ltp
         result = paper.open_position(sym, sig)
         if result.get("ok"):
+            pos = result.get("position", {})
             _pt_log("ENTRY", sym,
                     f"score={score} entry={sig.get('entry_price',0):.2f} "
-                    f"tp={result.get('target_price',0):.2f} sl={result.get('sl_price',0):.2f}", v)
+                    f"tp={pos.get('target_price',0):.2f} sl={pos.get('sl_price',0):.2f}", v)
             log.info(f"[PaperScanner] ENTERED {sym} {v} score={score}")
         else:
             reason = result.get("reason", "unknown")
@@ -223,12 +224,14 @@ async def _paper_scanner_loop():
     await asyncio.sleep(5)   # wait for startup
     loop = asyncio.get_event_loop()
 
-    # Fixed scan slots: 09:20 + every 15 min until 15:20
-    SCAN_TIMES = [(9, 20)] + [(h, m) for h in range(9, 16) for m in range(35, 60, 15)
-                               if not (h == 9 and m < 35)] + \
-                 [(15, 5), (15, 20)]
-    # Deduplicate and sort
-    SCAN_TIMES = sorted(set(SCAN_TIMES))
+    # Fixed scan slots: every 15 min from 09:20 to 15:20
+    # range(5,60,15) = [5,20,35,50] — exclude h=9,m<20 and h=15,m>20
+    SCAN_TIMES = sorted({
+        (h, m)
+        for h in range(9, 16)
+        for m in range(5, 60, 15)
+        if not (h == 9 and m < 20) and not (h == 15 and m > 20)
+    })
 
     while True:
         now = datetime.now(IST)
