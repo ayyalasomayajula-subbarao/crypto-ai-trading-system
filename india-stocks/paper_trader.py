@@ -139,12 +139,11 @@ def is_market_open(ts: datetime | None = None) -> bool:
     date_str = now.strftime("%Y-%m-%d")
     if date_str in NSE_HOLIDAYS:
         return False
-    open_t  = datetime.strptime(MARKET_OPEN_TIME,  "%H:%M").replace(tzinfo=IST)
-    close_t = datetime.strptime(MARKET_CLOSE_TIME, "%H:%M").replace(tzinfo=IST)
-    now_t   = now.replace(year=1900, month=1, day=1)
-    open_t  = open_t.replace(year=1900, month=1, day=1)
-    close_t = close_t.replace(year=1900, month=1, day=1)
-    return open_t <= now_t <= close_t
+    # Compare as plain (H, M) tuples — avoids pytz LMT offset bugs with year-1900 datetimes
+    now_hm   = (now.hour, now.minute)
+    open_h,  open_m  = map(int, MARKET_OPEN_TIME.split(":"))
+    close_h, close_m = map(int, MARKET_CLOSE_TIME.split(":"))
+    return (open_h, open_m) <= now_hm <= (close_h, close_m)
 
 
 # ─── State management ────────────────────────────────────────────────────────
@@ -215,7 +214,8 @@ class PaperTrader:
             if any(p["symbol"] == symbol for p in open_pos):
                 return {"ok": False, "reason": f"Already in {symbol}"}
 
-            if score / 100 < MIN_CONFIDENCE:
+            confidence = score / 100 if direction == "LONG" else (100 - score) / 100
+            if confidence < MIN_CONFIDENCE:
                 return {"ok": False, "reason": f"Confidence too low ({score:.0f})"}
 
             wf_mult = _get_size_multiplier(symbol)

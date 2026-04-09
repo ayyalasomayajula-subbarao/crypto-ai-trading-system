@@ -64,7 +64,8 @@ def fetch_ohlcv(yf_symbol: str, interval: str,
     if end:
         kwargs["end"] = end
     else:
-        kwargs["end"] = datetime.now(IST).strftime("%Y-%m-%d")
+        # +1 day because yfinance uses exclusive end: [start, end)
+        kwargs["end"] = (datetime.now(IST) + timedelta(days=1)).strftime("%Y-%m-%d")
 
     df = ticker.history(**kwargs)
     if df.empty:

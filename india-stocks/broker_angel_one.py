@@ -30,8 +30,11 @@ IST = pytz.timezone(TIMEZONE)
 # ─── Symbol token cache ───────────────────────────────────────────────────────
 
 _TOKEN_CACHE: dict[str, str] = {
+    # Indices
     "NIFTY50":    "99926000",
     "BANKNIFTY":  "99926009",
+    "NIFTYIT":    "99926009",   # mapped to NIFTYIT index token
+    # Stocks
     "RELIANCE":   "2885",
     "TCS":        "11536",
     "INFY":       "1594",
@@ -44,8 +47,16 @@ _TOKEN_CACHE: dict[str, str] = {
     "WIPRO":      "3787",
     "HCLTECH":    "7229",
     "MARUTI":     "10999",
-    "TATAMOTORS": "3456",
     "SUNPHARMA":  "3351",
+    "TITAN":      "3506",
+    "LT":         "11483",
+    "DRREDDY":    "881",
+    "BAJAJFINSV": "16675",
+    "ULTRACEMCO": "11532",
+    "ASIANPAINT": "236",
+    "KOTAKBANK":  "1922",
+    "CIPLA":      "694",
+    "TECHM":      "13538",
 }
 
 # ─── Broker class ─────────────────────────────────────────────────────────────
@@ -64,10 +75,41 @@ class AngelOneBroker:
         self.totp_secret = os.getenv("ANGEL_ONE_TOTP_SECRET", "")
         self._conn = None
 
-        if live and self.api_key:
+        # Always connect if credentials available — needed for live LTP even in paper mode
+        if self.api_key and self.client and self.totp_secret:
             self._connect()
         elif live:
             log.error("Live mode requested but ANGEL_ONE_* env vars not set")
+
+    def _get_token(self, symbol: str) -> str:
+        return _TOKEN_CACHE.get(symbol, "")
+
+    # ── Live quotes ───────────────────────────────────────────────────────────
+
+    # Index trading symbols on Angel One
+    _INDEX_TRADING_SYMBOLS: dict[str, str] = {
+        "NIFTY50":   "Nifty 50",
+        "BANKNIFTY": "Nifty Bank",
+        "NIFTYIT":   "Nifty IT",
+    }
+
+    def _trading_symbol(self, symbol: str) -> str:
+        cfg = INSTRUMENTS.get(symbol, {})
+        if cfg.get("type") == "index":
+            return self._INDEX_TRADING_SYMBOLS.get(symbol, symbol)
+        return f"{symbol}-EQ"
+
+    def _reconnect_if_needed(self) -> bool:
+        """Reconnect if session is stale. Called before every API call."""
+        if not self._conn:
+            return self._connect()
+        # Check session age — Angel One JWT expires after ~24h; refresh every 6h to be safe
+        if not hasattr(self, '_connected_at'):
+            self._connected_at = time.time()
+        if time.time() - self._connected_at > 6 * 3600:
+            log.info("Angel One: refreshing session (6h limit)")
+            return self._connect()
+        return True
 
     def _connect(self) -> bool:
         """Authenticate and create SmartAPI session."""
@@ -77,6 +119,7 @@ class AngelOneBroker:
             totp = pyotp.TOTP(self.totp_secret).now() if self.totp_secret else "000000"
             data = self._conn.generateSession(self.client, self.password, totp)
             if data and data.get("status"):
+                self._connected_at = time.time()
                 log.info("Angel One: connected successfully")
                 return True
             log.error(f"Angel One auth failed: {data}")
@@ -88,23 +131,46 @@ class AngelOneBroker:
             log.error(f"Angel One connect error: {e}")
             return False
 
-    def _get_token(self, symbol: str) -> str:
-        return _TOKEN_CACHE.get(symbol, "")
-
-    # ── Live quotes ───────────────────────────────────────────────────────────
+    def get_ohlc(self, symbol: str) -> dict:
+        """
+        Get full day OHLC + LTP via ltpData (zero delay).
+        Returns {"ltp", "open", "high", "low", "close"} or {} on error.
+        Auto-reconnects if session expired.
+        """
+        self._reconnect_if_needed()
+        if not self._conn:
+            return {}
+        try:
+            token = self._get_token(symbol)
+            if not token:
+                return {}
+            result = self._conn.ltpData("NSE", self._trading_symbol(symbol), token)
+            d = result.get("data", {})
+            if not d:
+                # Session may have expired mid-run — reconnect once and retry
+                if self._connect():
+                    result = self._conn.ltpData("NSE", self._trading_symbol(symbol), token)
+                    d = result.get("data", {})
+            if not d:
+                return {}
+            return {
+                "ltp":   float(d.get("ltp",   0)),
+                "open":  float(d.get("open",  0)),
+                "high":  float(d.get("high",  0)),
+                "low":   float(d.get("low",   0)),
+                "close": float(d.get("close", 0)),
+            }
+        except Exception as e:
+            log.warning(f"OHLC fetch {symbol}: {e}")
+            return {}
 
     def get_ltp(self, symbol: str) -> float:
-        """Get Last Traded Price for a symbol."""
-        if not self.live or not self._conn:
-            return 0.0
-        try:
-            token  = self._get_token(symbol)
-            exch   = "NSE" if INSTRUMENTS.get(symbol, {}).get("type") == "stock" else "NSE"
-            result = self._conn.ltpData(exch, symbol, token)
-            return float(result.get("data", {}).get("ltp", 0))
-        except Exception as e:
-            log.warning(f"LTP fetch {symbol}: {e}")
-            return 0.0
+        """Get Last Traded Price. Works in both paper and live mode if credentials set."""
+        return self.get_ohlc(symbol).get("ltp", 0.0)
+
+    def get_ltp_batch(self, symbols: list[str]) -> dict[str, float]:
+        """Fetch LTP for multiple symbols. Returns {symbol: ltp}."""
+        return {sym: self.get_ltp(sym) for sym in symbols}
 
     def get_quote(self, symbol: str) -> dict:
         """Get full quote for a symbol."""

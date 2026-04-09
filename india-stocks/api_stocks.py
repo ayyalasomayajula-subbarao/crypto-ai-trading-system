@@ -15,6 +15,8 @@ from datetime import datetime
 from typing import Optional
 
 import pytz
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -159,33 +161,52 @@ def _paper_scanner_tick():
         return
 
     # Bidirectional filter — match how WF backtest selected trades:
-    #   LONG:  direction=LONG  + score >= 55  (BUY / STRONG_BUY range)
-    #   SHORT: direction=SHORT + score <= 40  (SELL / STRONG_SELL range, bearish = low score)
+    #   LONG:  direction=LONG  + score >= 50  (LEAN_BUY and above)
+    #   SHORT: direction=SHORT + score <= 50  (LEAN_SELL and below)
     actionable = [
         s for s in signals
         if (
-            (s.get("direction") == "LONG"  and s.get("score", 0) >= 55) or
-            (s.get("direction") == "SHORT" and s.get("score", 0) <= 40)
+            (s.get("direction") == "LONG"  and s.get("score", 0) >= 50) or
+            (s.get("direction") == "SHORT" and s.get("score", 0) <= 50)
         )
     ]
 
     _pt_log("SCAN_START", detail=f"Found {len(actionable)} actionable signals out of {len(signals)}")
 
     for sig in actionable:
-        sym = sig["symbol"]
-        v   = sig.get("verdict", "")
+        sym   = sig["symbol"]
+        v     = sig.get("verdict", "")
         score = sig.get("score", 0)
+
+        # Fix 2: Stale entry guard — check how much price has moved since verdict was formed
+        # verdict entry_price = yesterday's close (model reference price)
+        # live LTP = actual current market price
+        ref_price = sig.get("entry_price", 0)
+        ltp = broker.get_ltp(sym)
+        if ref_price > 0 and ltp > 0:
+            gap_pct = abs(ltp - ref_price) / ref_price * 100
+            if gap_pct > 2.0:
+                _pt_log("SKIP", sym, f"Stale entry: price moved {gap_pct:.1f}% from ref (>2.0% limit)", v)
+                log.info(f"[PaperScanner] SKIP {sym}: stale entry gap={gap_pct:.1f}%")
+                continue
+            # up to 2% drift: acceptable, use live LTP as entry
+            sig["entry_price"] = ltp
 
         # Skip already open
         if any(p["symbol"] == sym for p in paper._state.get("open_positions", [])):
             _pt_log("SKIP", sym, f"Already in position", v)
             continue
 
+        # Use Angel One LTP as entry price if available
+        ltp = broker.get_ltp(sym)
+        if ltp > 0:
+            sig["entry_price"] = ltp
         result = paper.open_position(sym, sig)
         if result.get("ok"):
+            pos = result.get("position", {})
             _pt_log("ENTRY", sym,
                     f"score={score} entry={sig.get('entry_price',0):.2f} "
-                    f"tp={result.get('target_price',0):.2f} sl={result.get('sl_price',0):.2f}", v)
+                    f"tp={pos.get('target_price',0):.2f} sl={pos.get('sl_price',0):.2f}", v)
             log.info(f"[PaperScanner] ENTERED {sym} {v} score={score}")
         else:
             reason = result.get("reason", "unknown")
@@ -194,16 +215,55 @@ def _paper_scanner_tick():
 
 
 async def _paper_scanner_loop():
-    """Background loop: run scanner every 15 minutes during market hours."""
+    """
+    Background loop: scan at fixed market-aligned times.
+    First scan: 09:20 IST (after opening noise settles).
+    Subsequent scans: every 15 min — 09:35, 09:50, 10:05 ... 15:20.
+    Outside market hours: sleep and wake up near next open.
+    """
     await asyncio.sleep(5)   # wait for startup
     loop = asyncio.get_event_loop()
+
+    # Fixed scan slots: every 15 min from 09:20 to 15:20
+    # range(5,60,15) = [5,20,35,50] — exclude h=9,m<20 and h=15,m>20
+    SCAN_TIMES = sorted({
+        (h, m)
+        for h in range(9, 16)
+        for m in range(5, 60, 15)
+        if not (h == 9 and m < 20) and not (h == 15 and m > 20)
+    })
+
     while True:
+        now = datetime.now(IST)
+        today = now.date()
+
+        if now.weekday() >= 5:  # weekend — sleep until Monday 09:15
+            sleep_secs = max(60, (7 - now.weekday()) * 86400 - now.hour * 3600)
+            await asyncio.sleep(sleep_secs)
+            continue
+
+        # Find next scan slot today
+        next_slot = None
+        for h, m in SCAN_TIMES:
+            slot = IST.localize(datetime(today.year, today.month, today.day, h, m, 0))
+            if slot > now:
+                next_slot = slot
+                break
+
+        if next_slot is None:
+            # All scans done for today — sleep until 09:20 tomorrow
+            tomorrow = today + __import__('datetime').timedelta(days=1)
+            next_slot = IST.localize(datetime(tomorrow.year, tomorrow.month, tomorrow.day, 9, 20, 0))
+
+        sleep_secs = (next_slot - now).total_seconds()
+        log.info(f"[PaperScanner] Next scan at {next_slot.strftime('%H:%M IST')} (in {sleep_secs/60:.0f} min)")
+        await asyncio.sleep(max(1, sleep_secs))
+
         if is_market_open():
             try:
                 await loop.run_in_executor(None, _paper_scanner_tick)
             except Exception as e:
                 log.warning(f"[PaperScanner] tick error: {e}")
-        await asyncio.sleep(15 * 60)   # 15-minute interval
 
 
 @app.on_event("startup")
@@ -216,9 +276,50 @@ async def startup():
 
 # ─── Price helpers ────────────────────────────────────────────────────────────
 
+def _fetch_angel_one_prices() -> dict:
+    """
+    Fetch real-time LTP for all symbols via Angel One SmartAPI (zero delay).
+    Returns same format as _fetch_intraday_prices(). Falls back silently on error.
+    """
+    import pandas as pd
+    from config import ohlcv_path
+
+    result = {}
+    try:
+        for sym in ACTIVE_SYMBOLS:
+            ohlc = broker.get_ohlc(sym)
+            if not ohlc or ohlc.get("ltp", 0) <= 0:
+                continue
+            ltp        = ohlc["ltp"]
+            prev_close = ohlc["close"]   # yesterday's close from Angel One
+            day_open   = ohlc["open"]
+            day_high   = ohlc["high"]
+            day_low    = ohlc["low"]
+            change_pct = ((ltp - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
+            result[sym] = {
+                "symbol":       sym,
+                "price":        round(ltp, 2),
+                "open":         round(day_open, 2),
+                "high":         round(day_high, 2),
+                "low":          round(day_low, 2),
+                "prev_close":   round(prev_close, 2),
+                "volume":       0,
+                "change_pct":   round(change_pct, 2),
+                "timestamp":    datetime.now(IST).isoformat(),
+                "display_name": INSTRUMENTS[sym].get("display_name", sym),
+                "sector":       INSTRUMENTS[sym].get("sector", ""),
+                "type":         INSTRUMENTS[sym].get("type", ""),
+                "live":         True,
+                "source":       "angel_one",
+            }
+    except Exception as e:
+        log.warning(f"Angel One price fetch failed: {e}")
+    return result
+
+
 def _fetch_intraday_prices() -> dict:
     """
-    During market hours: fetch live intraday prices via yfinance 1m (~15 min delay).
+    Fallback: fetch intraday prices via yfinance 1m (~15 min delay).
     Returns dict keyed by symbol with current price, open, high, low, change_pct vs prev close.
     """
     import yfinance as yf
@@ -304,14 +405,19 @@ async def _get_live_prices() -> dict:
 
     prices = {}
 
-    # During market hours — fetch live intraday
+    # During market hours — Angel One LTP first (real-time), yfinance fallback (~15 min delay)
     if market_open:
         try:
             prices = await asyncio.get_event_loop().run_in_executor(
-                None, _fetch_intraday_prices
+                None, _fetch_angel_one_prices
             )
+            if len(prices) < 5:   # Angel One failed or partial — fall back to yfinance
+                log.warning("Angel One returned few prices, falling back to yfinance")
+                prices = await asyncio.get_event_loop().run_in_executor(
+                    None, _fetch_intraday_prices
+                )
         except Exception as e:
-            log.warning(f"Intraday fetch error: {e}")
+            log.warning(f"Live price fetch error: {e}")
 
     # Fill any missing symbols (or all symbols outside market hours) from 1D CSV
     for sym in ACTIVE_SYMBOLS:
@@ -712,6 +818,11 @@ class TradeRequest(BaseModel):
 def paper_open(req: TradeRequest):
     sym = req.symbol.upper()
     v = verdict.get_verdict(sym, force=req.force)
+    # Override entry_price with real-time Angel One LTP if available
+    ltp = broker.get_ltp(sym)
+    if ltp > 0:
+        v["entry_price"] = ltp
+        log.info(f"[PaperOpen] {sym} entry_price overridden to Angel One LTP={ltp}")
     return paper.open_position(sym, v)
 
 
